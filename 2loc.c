@@ -1,15 +1,9 @@
-// TLSFAllocator.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
 #include <math.h>
 #include "header.h"
 
 //Header
-#define tfxKilobyte(Value) ((Value)*1024LL)
-#define tfxMegabyte(Value) (tfxKilobyte(Value)*1024LL)
-#define tfxGigabyte(Value) (tfxMegabyte(Value)*1024LL)
-#define tfxMin(a, b) (((a) < (b)) ? (a) : (b))
-#define tfxMax(a, b) (((a) > (b)) ? (a) : (b))
+#define tloc__Min(a, b) (((a) < (b)) ? (a) : (b))
+#define tloc__Max(a, b) (((a) > (b)) ? (a) : (b))
 
 typedef unsigned int TLocIndex;
 typedef unsigned int u32;
@@ -36,7 +30,8 @@ enum tloc__constants {
 typedef enum tloc__error_codes {
 	tloc__OK,
 	tloc__INVALID_FIRST_BLOCK,
-	tloc__INVALID_BLOCK_FOUND
+	tloc__INVALID_BLOCK_FOUND,
+	tloc__INVALID_SEGRATED_LIST
 } tloc__error_codes;
 
 typedef struct TLocHeader {
@@ -61,7 +56,8 @@ void *tloc_Allocate(TLoc *allocator, u32 size);
 void tloc_Free(TLoc *allocator, void *allocation);
 
 //Debugging
-bool tloc_VerifyBlocks(TLoc *allocator);
+tloc__error_codes tloc_VerifyBlocks(TLoc *allocator);
+tloc__error_codes tloc_VerifySegregatedLists(TLoc *allocator);
 bool tloc_ValidPointer(TLoc *allocator, void *pointer);
 bool tloc_ValidBlock(TLoc *allocator, TLocHeader *block);
 //----
@@ -136,6 +132,10 @@ static inline void tloc__set_block_size(TLocHeader *block, u32 size) {
 
 static inline void tloc__set_prev_physical_block(TLocHeader *block, TLocHeader *prev_block) {
 	block->prev_physical_block = prev_block;
+}
+
+static inline TLocHeader *tloc__block_from_allocation(void *allocation) {
+	return (TLocHeader*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
 }
 
 static inline TLocHeader *tloc__terminate(TLoc *allocator) {
@@ -274,6 +274,25 @@ tloc__error_codes tloc_VerifyBlocks(TLoc *allocator) {
 	}
 	return tloc__OK;
 }
+
+tloc__error_codes tloc_VerifySegregatedLists(TLoc *allocator) {
+	TLocIndex scan_result;
+	_BitScanReverse(&scan_result, (u32)allocator->total_memory);
+	u32 first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX);
+	u32 second_level_index_count = 1 << allocator->second_level_index;
+	for (int fli = 0; fli != first_level_index_count; ++fli) {
+		for (int sli = 0; sli != second_level_index_count; ++sli) {
+			TLocHeader *block = allocator->segregated_lists[fli][sli];
+			if (block == tloc__terminate(allocator)) {
+				continue;
+			} else if (!tloc_ValidBlock(allocator, allocator->segregated_lists[fli][sli])) {
+				return tloc__INVALID_SEGRATED_LIST;
+			}
+		}
+	}
+	return tloc__OK;
+}
+
 //--- End Debugging tools
 
 //Definitions
@@ -288,7 +307,7 @@ TLoc *tloc_InitialiseAllocator(void *memory, u32 size, u32 second_level_index) {
 	TLocIndex scan_result;
 	//Get the number of first level size categorisations. Must not be larger then 31
 	_BitScanReverse(&scan_result, size);
-	u32 first_level_index_count = tfxMin(scan_result, tloc__FIRST_LEVEL_INDEX_MAX);
+	u32 first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX);
 	//Each first level size class then splits into finer classes by the second level index log2
 	u32 second_level_index_count = 1 << second_level_index;
 
@@ -298,9 +317,10 @@ TLoc *tloc_InitialiseAllocator(void *memory, u32 size, u32 second_level_index) {
 	//If the size of the pool is too small then assert
 	//We need the size of the second level list to know how much to offset the pointer in the first level list
 	u32 size_of_second_level_bitmap_list = second_level_index_count * sizeof(u32);
-	u32 size_of_each_second_level_list = second_level_index_count * sizeof(TLocHeader**);
-	u32 size_of_first_level_list = first_level_index_count * sizeof(TLocHeader***);
-	u32 lists_size = first_level_index_count * second_level_index_count * sizeof(TLocHeader*) + size_of_second_level_bitmap_list;
+	u32 size_of_each_second_level_list = second_level_index_count * tloc__POINTER_SIZE;
+	u32 size_of_first_level_list = first_level_index_count * tloc__POINTER_SIZE;
+	u32 segregated_list_size = (second_level_index_count * tloc__POINTER_SIZE * first_level_index_count) + (first_level_index_count * tloc__POINTER_SIZE);
+	u32 lists_size = segregated_list_size + size_of_second_level_bitmap_list;
 	assert(size > lists_size + tloc__MINIMUM_BLOCK_SIZE);
 
 	//Set the pointer to the start of the memory pool which starts after the segregated_lists array
@@ -373,11 +393,20 @@ void tloc_Free(TLoc *allocator, void* allocation) {
 int main()
 {
 
-	void *memory = malloc(tfxMegabyte(16));
-	TLoc *allocator = tloc_InitialiseAllocator(memory, tfxMegabyte(16), 5);
-	void *allocation = tloc_Allocate(allocator, 1024);
-	tloc_VerifyBlocks(allocator);
+	void *memory = malloc(1024 * 1024 * 16);
+	TLoc *allocator = tloc_InitialiseAllocator(memory, 1024 * 1024 * 16, 5);
+	int *allocation = tloc_Allocate(allocator, 1024);
+	for (int c = 0; c != 256; ++c) {
+		allocation[c] = c;
+	}
+	for (int c = 0; c != 1024 / sizeof(int); ++c) {
+		printf("%i\n", allocation[c]);
+	}
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
+	assert(tloc_VerifyBlocks(allocator) == tloc__OK);
 	tloc_Free(allocator, allocation);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
+	assert(tloc_VerifyBlocks(allocator) == tloc__OK);
 
 	free(memory);
 	
