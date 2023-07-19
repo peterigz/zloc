@@ -42,7 +42,7 @@ typedef struct TLocHeader {
 } TLocHeader;
 
 typedef struct TLoc {
-	TLocHeader terminator_block;
+	TLocHeader end_block;
 	u32 second_level_index;
 	TLocHeader *first_block;
 	size_t total_memory;
@@ -138,8 +138,8 @@ static inline TLocHeader *tloc__block_from_allocation(void *allocation) {
 	return (TLocHeader*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
 }
 
-static inline TLocHeader *tloc__terminate(TLoc *allocator) {
-	return &allocator->terminator_block;
+static inline TLocHeader *tloc__end(TLoc *allocator) {
+	return &allocator->end_block;
 }
 
 static inline void tloc__push_block(TLoc *allocator, TLocHeader *block) {
@@ -149,11 +149,11 @@ static inline void tloc__push_block(TLoc *allocator, TLocHeader *block) {
 	tloc__map(tloc__block_size(block), allocator->second_level_index, &fi, &si);
 	TLocHeader *current_block_in_free_list = allocator->segregated_lists[fi][si];
 	tloc__flag_block_as_free(block);
-	if (current_block_in_free_list == tloc__terminate(allocator)) {
+	if (current_block_in_free_list == tloc__end(allocator)) {
 		int d = 0;
 	}
 	block->next_free_block = current_block_in_free_list;
-	block->prev_free_block = &allocator->terminator_block;
+	block->prev_free_block = &allocator->end_block;
 	//This might be the terminator block but it doesn't matter?
 	current_block_in_free_list->prev_free_block = block;
 
@@ -165,13 +165,13 @@ static inline void tloc__push_block(TLoc *allocator, TLocHeader *block) {
 
 static inline TLocHeader *tloc__pop_block(TLoc *allocator, u32 fli, u32 sli) {
 	TLocHeader *block = allocator->segregated_lists[fli][sli];
-	assert(block != &allocator->terminator_block);
-	if (block->next_free_block != &allocator->terminator_block) {
+	assert(block != &allocator->end_block);
+	if (block->next_free_block != &allocator->end_block) {
 		allocator->segregated_lists[fli][sli] = block->next_free_block;
-		allocator->segregated_lists[fli][sli]->prev_free_block = tloc__terminate(allocator);
+		allocator->segregated_lists[fli][sli]->prev_free_block = tloc__end(allocator);
 	}
 	else {
-		allocator->segregated_lists[fli][sli] = tloc__terminate(allocator);
+		allocator->segregated_lists[fli][sli] = tloc__end(allocator);
 		allocator->second_level_bitmaps[fli] &= ~(1 << sli);
 		if (allocator->second_level_bitmaps[fli] == 0) {
 			allocator->first_level_bitmap &= ~(1 << fli);
@@ -191,7 +191,7 @@ static inline void tloc__free_block(TLoc *allocator, TLocHeader *block) {
 	prev_block->next_free_block = next_block;
 	if (allocator->segregated_lists[fli][sli] == block) {
 		allocator->segregated_lists[fli][sli] = next_block;
-		if (next_block == tloc__terminate(allocator)) {
+		if (next_block == tloc__end(allocator)) {
 			allocator->second_level_bitmaps[fli] &= ~(1U << sli);
 			if (allocator->second_level_bitmaps[fli] == 0) {
 				allocator->first_level_bitmap &= ~(1U << fli);
@@ -283,7 +283,7 @@ tloc__error_codes tloc_VerifySegregatedLists(TLoc *allocator) {
 	for (int fli = 0; fli != first_level_index_count; ++fli) {
 		for (int sli = 0; sli != second_level_index_count; ++sli) {
 			TLocHeader *block = allocator->segregated_lists[fli][sli];
-			if (block == tloc__terminate(allocator)) {
+			if (block == tloc__end(allocator)) {
 				continue;
 			} else if (!tloc_ValidBlock(allocator, allocator->segregated_lists[fli][sli])) {
 				return tloc__INVALID_SEGRATED_LIST;
@@ -300,8 +300,8 @@ TLoc *tloc_InitialiseAllocator(void *memory, u32 size, u32 second_level_index) {
 	assert(tloc__is_aligned(size, tloc__MEMORY_ALIGNMENT));
 	TLoc *allocator = (TLoc*)memory;
 	memset(allocator, 0, sizeof(TLoc));
-	allocator->terminator_block.next_free_block = &allocator->terminator_block;
-	allocator->terminator_block.prev_free_block = &allocator->terminator_block;
+	allocator->end_block.next_free_block = &allocator->end_block;
+	allocator->end_block.prev_free_block = &allocator->end_block;
 	allocator->second_level_index = second_level_index;
 
 	TLocIndex scan_result;
@@ -335,7 +335,7 @@ TLoc *tloc_InitialiseAllocator(void *memory, u32 size, u32 second_level_index) {
 		TLocHeader **ptr = (TLocHeader**)((char*)memory + (array_offset + size_of_second_level_bitmap_list + size_of_first_level_list) + (i * size_of_each_second_level_list));
 		allocator->segregated_lists[i] = ptr;
 		for (u32 j = 0; j < second_level_index_count; j++) {
-			allocator->segregated_lists[i][j] = &allocator->terminator_block;
+			allocator->segregated_lists[i][j] = &allocator->end_block;
 		}
 	}
 	//Now add the memory pool into the segregated list as a free block.
@@ -352,7 +352,7 @@ TLoc *tloc_InitialiseAllocator(void *memory, u32 size, u32 second_level_index) {
 	tloc__flag_block_as_prev_used(block);
 	tloc__push_block(allocator, block);
 
-	block->prev_physical_block = tloc__terminate(allocator);
+	block->prev_physical_block = tloc__end(allocator);
 
 	return allocator;
 }
@@ -395,16 +395,24 @@ int main()
 
 	void *memory = malloc(1024 * 1024 * 16);
 	TLoc *allocator = tloc_InitialiseAllocator(memory, 1024 * 1024 * 16, 5);
-	int *allocation = tloc_Allocate(allocator, 1024);
+	int *some_ints = tloc_Allocate(allocator, 1024);
+	float *some_floats = tloc_Allocate(allocator, 4096);
 	for (int c = 0; c != 256; ++c) {
-		allocation[c] = c;
+		some_ints[c] = c;
+	}
+	for (int c = 0; c != 1024; ++c) {
+		some_floats[c] = (float)c * 2.5f;
 	}
 	for (int c = 0; c != 1024 / sizeof(int); ++c) {
-		printf("%i\n", allocation[c]);
+		printf("%i\n", some_ints[c]);
+	}
+	for (int c = 0; c != 1024; ++c) {
+		printf("%f\n", some_floats[c]);
 	}
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	assert(tloc_VerifyBlocks(allocator) == tloc__OK);
-	tloc_Free(allocator, allocation);
+	tloc_Free(allocator, some_ints);
+	tloc_Free(allocator, some_floats);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	assert(tloc_VerifyBlocks(allocator) == tloc__OK);
 
