@@ -20,7 +20,10 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="2loc.c">
+    <ClCompile Include="2loc.h">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="tests.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
