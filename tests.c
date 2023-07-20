@@ -16,7 +16,7 @@ void PrintTestResult(const char *message, int result) {
 //Test if passing a memory pool that is too small to the initialiser is handled gracefully
 int TestPoolTooSmall() {
 	void *memory = malloc(1024);
-	TLoc *allocator = tloc_InitialiseAllocator(memory, 1024, 5);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, 1024, 5);
 	if (!allocator) {
 		tloc_free_memory(memory);
 		return 1;
@@ -27,7 +27,7 @@ int TestPoolTooSmall() {
 
 int TestNonAlignedMemoryPool() {
 	void *memory = malloc(1023);
-	TLoc *allocator = tloc_InitialiseAllocator(memory, 1023, 5);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, 1023, 5);
 	if (!allocator) {
 		tloc_free_memory(memory);
 		return 1;
@@ -40,7 +40,7 @@ int TestAllocateSingleOverAllocate() {
 	tloc_size size = 1024 * 1024;
 	int result = 1;
 	void *memory = malloc(size);
-	TLoc *allocator = tloc_InitialiseAllocator(memory, size, 5);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, 5);
 	if (!allocator) {
 		result = 0;
 	}
@@ -56,7 +56,7 @@ int TestAllocateMultiOverAllocate() {
 	tloc_size size = 1024 * 1024;
 	int result = 1;
 	void *memory = malloc(size);
-	TLoc *allocator = tloc_InitialiseAllocator(memory, size, 5);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, 5);
 	if (!allocator) {
 		result = 0;
 	}
@@ -76,12 +76,13 @@ int TestAllocateMultiOverAllocate() {
 	return result;
 }
 
+//64bit tests
 //Test allocating some memory that is too small
 int TestAllocationTooSmall() {
 	tloc_size size = 1024 * 1024;
 	int result = 1;
 	void *memory = malloc(size);
-	TLoc *allocator = tloc_InitialiseAllocator(memory, size, 5);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, 5);
 	if (!allocator) {
 		result = 0;
 	}
@@ -92,12 +93,13 @@ int TestAllocationTooSmall() {
 	return result;
 }
 
+#if defined(tloc__64BIT)
 //Allocate a large block
 int TestAllocation64bit() {
 	tloc_size size = (1024ull * 1024ull * 1024ull * 6ull);	//6 gb
 	int result = 1;
 	void* memory = malloc(size);
-	TLoc *allocator = tloc_InitialiseAllocator(memory, size, 5);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, 5);
 	if (!allocator) {
 		result = 0;
 	}
@@ -109,15 +111,19 @@ int TestAllocation64bit() {
 	tloc_free_memory(memory);
 	return result;
 }
+#endif
 
 int main()
 {
+	//These tests should be caught by the allocator and give a nice error message
 	PrintTestResult("Test: Pool passed to initialiser is too small", TestPoolTooSmall());
 	PrintTestResult("Test: Non aligned memory pool passed to Initialiser", TestNonAlignedMemoryPool());
 	PrintTestResult("Test: Attempt to allocate more memory than is available in one go", TestAllocateSingleOverAllocate());
 	PrintTestResult("Test: Attempt to allocate more memory than is available with multiple attemps", TestAllocateMultiOverAllocate());
 	PrintTestResult("Test: Attempt to allocate memory that is below minimum block size", TestAllocationTooSmall());
-	PrintTestResult("Test: Create a large (>2gb) memory pool, and allocate half of it. Note: Failed may mean unable to malloc >2gb", TestAllocation64bit());
+#if defined(tloc__64BIT)
+	PrintTestResult("Test: Create a large (>4gb) memory pool, and allocate half of it", TestAllocation64bit());
+#endif
 }
 
 #endif

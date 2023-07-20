@@ -64,23 +64,23 @@ typedef enum tloc__error_codes {
 	tloc__SECOND_LEVEL_BITMAPS_NOT_INITIALISED
 } tloc__error_codes;
 
-typedef struct TLocHeader {
-	struct TLocHeader *prev_physical_block;
+typedef struct tloc_header {
+	struct tloc_header *prev_physical_block;
 	tloc_size size;
-	struct TLocHeader *prev_free_block;
-	struct TLocHeader *next_free_block;
-} TLocHeader;
+	struct tloc_header *prev_free_block;
+	struct tloc_header *next_free_block;
+} tloc_header;
 
-typedef struct TLoc {
-	TLocHeader end_block;
+typedef struct tloc_allocator {
+	tloc_header end_block;
 	tloc_index second_level_index;
-	TLocHeader *first_block;
+	tloc_header *first_block;
 	void *end_of_pool;
 	size_t total_memory;
 	tloc_fl_bitmap first_level_bitmap;
 	tloc_sl_bitmap *second_level_bitmaps;
-	TLocHeader ***segregated_lists;
-} TLoc;
+	tloc_header ***segregated_lists;
+} tloc_allocator;
 
 #if defined (_MSC_VER) && (_MSC_VER >= 1400) && (defined (_M_IX86) || defined (_M_X64))
 /* Microsoft Visual C++ support on x86/X64 architectures. */
@@ -134,35 +134,35 @@ static inline void tloc__map(tloc_size size, tloc_uint sub_div_log2, tloc_index 
 	*sli = (tloc_index)(size >> (*fli - sub_div_log2)) % max_sli;
 }
 
-static inline tloc_bool tloc__has_free_block(TLoc *allocator, tloc_index fli, tloc_index sli) {
+static inline tloc_bool tloc__has_free_block(tloc_allocator *allocator, tloc_index fli, tloc_index sli) {
 	return allocator->first_level_bitmap & (1ULL << fli) && allocator->second_level_bitmaps[fli] & (1U << sli);
 }
 
-static inline void tloc__clear_boundary_tag(TLocHeader *block) {
+static inline void tloc__clear_boundary_tag(tloc_header *block) {
 	block->size &= ~(tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);
 }
 
-static inline void tloc__flag_block_as_free(TLocHeader *block) {
+static inline void tloc__flag_block_as_free(tloc_header *block) {
 	block->size |= tloc__BLOCK_IS_FREE;
 }
 
-static inline void tloc__flag_block_as_used(TLocHeader *block) {
+static inline void tloc__flag_block_as_used(tloc_header *block) {
 	block->size &= ~tloc__BLOCK_IS_FREE;
 }
 
-static inline void tloc__flag_block_as_prev_free(TLocHeader *block) {
+static inline void tloc__flag_block_as_prev_free(tloc_header *block) {
 	block->size |= tloc__PREV_BLOCK_IS_FREE;
 }
 
-static inline void tloc__flag_block_as_prev_used(TLocHeader *block) {
+static inline void tloc__flag_block_as_prev_used(tloc_header *block) {
 	block->size &= ~tloc__PREV_BLOCK_IS_FREE;
 }
 
-static inline tloc_bool tloc__is_free_block(TLocHeader *block) {
+static inline tloc_bool tloc__is_free_block(tloc_header *block) {
 	return block->size & tloc__BLOCK_IS_FREE;
 }
 
-static inline tloc_bool tloc__prev_is_free_block(TLocHeader *block) {
+static inline tloc_bool tloc__prev_is_free_block(tloc_header *block) {
 	return block->size & tloc__PREV_BLOCK_IS_FREE;
 }
 
@@ -182,53 +182,53 @@ static inline tloc_size tloc__align_size_up(tloc_size size, tloc_index alignment
 	return size;
 }
 
-static inline void *tloc__end_of_memory_pointer(TLoc *allocator) {
+static inline void *tloc__end_of_memory_pointer(tloc_allocator *allocator) {
 	return (void*)((char*)allocator + allocator->total_memory);
 }
 
-static inline TLocHeader *tloc__first_block(TLoc *allocator) {
+static inline tloc_header *tloc__first_block(tloc_allocator *allocator) {
 	return allocator->first_block;
 }
 
-static inline tloc_size tloc__block_size(TLocHeader *block) {
+static inline tloc_size tloc__block_size(tloc_header *block) {
 	return block->size & ~(tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);
 }
 
-static inline void tloc__set_block_size(TLocHeader *block, tloc_size size) {
+static inline void tloc__set_block_size(tloc_header *block, tloc_size size) {
 	tloc_size boundary_tag = block->size & (tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);
 	block->size = size | boundary_tag;
 }
 
-static inline void tloc__set_prev_physical_block(TLocHeader *block, TLocHeader *prev_block) {
+static inline void tloc__set_prev_physical_block(tloc_header *block, tloc_header *prev_block) {
 	block->prev_physical_block = prev_block;
 }
 
-static inline TLocHeader *tloc__block_from_allocation(void *allocation) {
-	return (TLocHeader*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
+static inline tloc_header *tloc__block_from_allocation(void *allocation) {
+	return (tloc_header*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
 }
 
-static inline TLocHeader *tloc__end(TLoc *allocator) {
+static inline tloc_header *tloc__end(tloc_allocator *allocator) {
 	return &allocator->end_block;
 }
 
-static inline void* tloc__block_user_ptr(TLocHeader *block) {
+static inline void* tloc__block_user_ptr(tloc_header *block) {
 	return (char*)block + tloc__BLOCK_POINTER_OFFSET;
 }
 
-static inline TLocHeader *tloc__next_physical_block(TLocHeader *block) {
-	return (TLocHeader*)((char*)tloc__block_user_ptr(block) + tloc__block_size(block));
+static inline tloc_header *tloc__next_physical_block(tloc_header *block) {
+	return (tloc_header*)((char*)tloc__block_user_ptr(block) + tloc__block_size(block));
 }
 
-static inline tloc_bool tloc__is_last_block(TLoc *allocator, TLocHeader *block) {
+static inline tloc_bool tloc__is_last_block(tloc_allocator *allocator, tloc_header *block) {
 	return (void*)tloc__next_physical_block(block) == allocator->end_of_pool;
 }
 
-static inline void tloc__push_block(TLoc *allocator, TLocHeader *block) {
+static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *block) {
 
 	tloc_index fi;
 	tloc_index si;
 	tloc__map(tloc__block_size(block), allocator->second_level_index, &fi, &si, 1 << allocator->second_level_index);
-	TLocHeader *current_block_in_free_list = allocator->segregated_lists[fi][si];
+	tloc_header *current_block_in_free_list = allocator->segregated_lists[fi][si];
 	tloc__flag_block_as_free(block);
 	block->next_free_block = current_block_in_free_list;
 	block->prev_free_block = &allocator->end_block;
@@ -246,8 +246,8 @@ static inline void tloc__push_block(TLoc *allocator, TLocHeader *block) {
 
 }
 
-static inline TLocHeader *tloc__pop_block(TLoc *allocator, tloc_index fli, tloc_index sli) {
-	TLocHeader *block = allocator->segregated_lists[fli][sli];
+static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index fli, tloc_index sli) {
+	tloc_header *block = allocator->segregated_lists[fli][sli];
 	assert(block != &allocator->end_block);
 	if (block->next_free_block != &allocator->end_block) {
 		allocator->segregated_lists[fli][sli] = block->next_free_block;
@@ -263,11 +263,11 @@ static inline TLocHeader *tloc__pop_block(TLoc *allocator, tloc_index fli, tloc_
 	return block;
 }
 
-static inline void tloc__free_block(TLoc *allocator, TLocHeader *block) {
+static inline void tloc__free_block(tloc_allocator *allocator, tloc_header *block) {
 	tloc_index fli, sli;
 	tloc__map(tloc__block_size(block), allocator->second_level_index, &fli, &sli, 1 << allocator->second_level_index);
-	TLocHeader *prev_block = block->prev_free_block;
-	TLocHeader *next_block = block->next_free_block;
+	tloc_header *prev_block = block->prev_free_block;
+	tloc_header *next_block = block->next_free_block;
 	assert(prev_block);
 	assert(next_block);
 	next_block->prev_free_block = prev_block;
@@ -288,9 +288,9 @@ static inline tloc_index tloc__find_next_size_up(tloc_fl_bitmap map, tloc_uint s
 	return tloc__scan_forward(map);
 }
 
-static inline void *tloc__split_block(TLoc *allocator, TLocHeader *block, tloc_size size) {
+static inline void *tloc__split_block(tloc_allocator *allocator, tloc_header *block, tloc_size size) {
 	tloc_size size_plus_overhead = size + tloc__BLOCK_POINTER_OFFSET;
-	TLocHeader *trimmed = (TLocHeader*)((char*)tloc__block_user_ptr(block) + size);
+	tloc_header *trimmed = (tloc_header*)((char*)tloc__block_user_ptr(block) + size);
 	trimmed->size = 0;
 	tloc__set_block_size(trimmed, tloc__block_size(block) - size_plus_overhead);
 	tloc__set_prev_physical_block(trimmed, block);
@@ -300,15 +300,15 @@ static inline void *tloc__split_block(TLoc *allocator, TLocHeader *block, tloc_s
 	return (void*)((char*)block + tloc__BLOCK_POINTER_OFFSET);
 }
 
-static inline TLocHeader *tloc__merge_with_prev_block(TLoc *allocator, TLocHeader *block) {
-	TLocHeader *prev_block = block->prev_physical_block;
+static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator, tloc_header *block) {
+	tloc_header *prev_block = block->prev_physical_block;
 	tloc__set_block_size(prev_block, tloc__block_size(prev_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
 	tloc__free_block(allocator, block);
 	return prev_block;
 }
 
-static inline void tloc__merge_with_next_block_if_free(TLoc *allocator, TLocHeader *block) {
-	TLocHeader *next_block = tloc__next_physical_block(block);
+static inline void tloc__merge_with_next_block_if_free(tloc_allocator *allocator, tloc_header *block) {
+	tloc_header *next_block = tloc__next_physical_block(block);
 	if (tloc__is_free_block(next_block)) {
 		tloc__set_block_size(block, tloc__block_size(next_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
 		tloc__free_block(allocator, next_block);
@@ -316,17 +316,17 @@ static inline void tloc__merge_with_next_block_if_free(TLoc *allocator, TLocHead
 }
 //--End of internal functions
 
-TLoc *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_level_index);
-void *tloc_Allocate(TLoc *allocator, tloc_size size);
-void tloc_Free(TLoc *allocator, void *allocation);
+tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_level_index);
+void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
+void tloc_Free(tloc_allocator *allocator, void *allocation);
 
 //Debugging
 typedef void(*tloc__block_output)(void* ptr, size_t size, int used, void* user, int is_final_output);
-tloc__error_codes tloc_VerifyBlocks(TLoc *allocator, tloc__block_output output_function, void *user_data);
-tloc__error_codes tloc_VerifySegregatedLists(TLoc *allocator);
-tloc__error_codes tloc_VerifySecondLevelBitmapsAreInitialised(TLoc *allocator);
-tloc_bool tloc_ValidPointer(TLoc *allocator, void *pointer);
-tloc_bool tloc_ValidBlock(TLoc *allocator, TLocHeader *block);
+tloc__error_codes tloc_VerifyBlocks(tloc_allocator *allocator, tloc__block_output output_function, void *user_data);
+tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator);
+tloc__error_codes tloc_VerifySecondLevelBitmapsAreInitialised(tloc_allocator *allocator);
+tloc_bool tloc_ValidPointer(tloc_allocator *allocator, void *pointer);
+tloc_bool tloc_ValidBlock(tloc_allocator *allocator, tloc_header *block);
 //--End of header declarations
 
 #ifdef __cplusplus
@@ -345,7 +345,7 @@ tloc_bool tloc_ValidBlock(TLoc *allocator, TLocHeader *block);
 #include <string.h>
 
 //Definitions
-TLoc *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_level_index) {
+tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_level_index) {
 	if (!memory) {
 		TLOC_PRINT_ERROR("%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", TLOC_ERROR_NAME);
 		return 0;
@@ -354,12 +354,12 @@ TLoc *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_l
 		TLOC_PRINT_ERROR("%s: memory passed to allocator is not aligned to: %u bytes\n", TLOC_ERROR_NAME, tloc__MEMORY_ALIGNMENT);
 		return 0;
 	}
-	TLoc *allocator = (TLoc*)memory;
-	memset(allocator, 0, sizeof(TLoc));
+	tloc_allocator *allocator = (tloc_allocator*)memory;
+	memset(allocator, 0, sizeof(tloc_allocator));
 	allocator->end_block.next_free_block = &allocator->end_block;
 	allocator->end_block.prev_free_block = &allocator->end_block;
 	allocator->second_level_index = second_level_index;
-	size_t array_offset = sizeof(TLoc);
+	size_t array_offset = sizeof(tloc_allocator);
 
 	tloc_index scan_result;
 	//Get the number of first level size categorisations. Must not be larger then 31
@@ -388,14 +388,14 @@ TLoc *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_l
 
 	//Set the pointer to the start of the memory pool which starts after the segregated_lists array
 	allocator->total_memory = size;
-	allocator->first_block = (TLocHeader*)((char*)memory + array_offset + lists_size);
-	allocator->second_level_bitmaps = (tloc_index*)(((char*)memory) + array_offset);
+	allocator->first_block = (tloc_header*)((char*)memory + array_offset + lists_size);
+	allocator->second_level_bitmaps = (tloc_sl_bitmap*)(((char*)memory) + array_offset);
 	memset(allocator->second_level_bitmaps, 0, size_of_second_level_bitmap_list);
 	assert(tloc_VerifySecondLevelBitmapsAreInitialised(allocator) == tloc__OK);
 	//Point all of the segregated list array pointers to the empty block
-	allocator->segregated_lists = (TLocHeader***)(((char*)memory) + array_offset + size_of_second_level_bitmap_list);
+	allocator->segregated_lists = (tloc_header***)(((char*)memory) + array_offset + size_of_second_level_bitmap_list);
 	for (tloc_uint i = 0; i < first_level_index_count; i++) {
-		TLocHeader **ptr = (TLocHeader**)((char*)memory + (array_offset + size_of_second_level_bitmap_list + size_of_first_level_list) + (i * size_of_each_second_level_list));
+		tloc_header **ptr = (tloc_header**)((char*)memory + (array_offset + size_of_second_level_bitmap_list + size_of_first_level_list) + (i * size_of_each_second_level_list));
 		allocator->segregated_lists[i] = ptr;
 		for (tloc_uint j = 0; j < second_level_index_count; j++) {
 			allocator->segregated_lists[i][j] = &allocator->end_block;
@@ -403,7 +403,7 @@ TLoc *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_l
 	}
 	//Now add the memory pool into the segregated list as a free block.
 	//Offset it back by the pointer size and set the previous physical block to the terminator block
-	TLocHeader *block = allocator->first_block;
+	tloc_header *block = allocator->first_block;
 	tloc__set_block_size(block, size - (array_offset + lists_size + tloc__POINTER_SIZE + tloc__BLOCK_SIZE_OVERHEAD));
 	tloc__clear_boundary_tag(block);
 
@@ -426,7 +426,7 @@ TLoc *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_l
 	return allocator;
 }
 
-void *tloc_Allocate(TLoc *allocator, tloc_size size) {
+void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	tloc_index fli;
 	tloc_index sli;
 	size = tloc__align_size_up(size, tloc__MEMORY_ALIGNMENT);
@@ -443,7 +443,7 @@ void *tloc_Allocate(TLoc *allocator, tloc_size size) {
 		fli = tloc__find_next_size_up(allocator->first_level_bitmap, fli);
 		if (fli > -1) {
 			sli = tloc__scan_forward(allocator->second_level_bitmaps[fli]);
-			TLocHeader *block = tloc__pop_block(allocator, fli, sli);
+			tloc_header *block = tloc__pop_block(allocator, fli, sli);
 			if (block->size > size) {
 				void *allocation = tloc__split_block(allocator, block, size);
 				return allocation;
@@ -451,7 +451,7 @@ void *tloc_Allocate(TLoc *allocator, tloc_size size) {
 		}
 	}
 	else {
-		TLocHeader *block = tloc__pop_block(allocator, fli, sli);
+		tloc_header *block = tloc__pop_block(allocator, fli, sli);
 		if (block->size > size) {
 			void *allocation = tloc__split_block(allocator, block, size);
 			return allocation;
@@ -462,8 +462,8 @@ void *tloc_Allocate(TLoc *allocator, tloc_size size) {
 	return NULL;
 }
 
-void tloc_Free(TLoc *allocator, void* allocation) {
-	TLocHeader *block = (TLocHeader*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
+void tloc_Free(tloc_allocator *allocator, void* allocation) {
+	tloc_header *block = (tloc_header*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
 	if (tloc__prev_is_free_block(block)) {
 		tloc__push_block(allocator, block);
 		assert(block->prev_physical_block);		//Must be a valid previous physical block
@@ -476,12 +476,12 @@ void tloc_Free(TLoc *allocator, void* allocation) {
 
 
 //--- Debugging tools
-tloc_bool tloc_ValidPointer(TLoc *allocator, void *pointer) {
+tloc_bool tloc_ValidPointer(tloc_allocator *allocator, void *pointer) {
 	return pointer >= (void*)allocator && pointer <= (void*)((char*)allocator + allocator->total_memory);
 }
 
-tloc_bool tloc_ValidBlock(TLoc *allocator, TLocHeader *block) {
-	if (tloc_ValidPointer(allocator, (void*)block) && tloc_ValidPointer(allocator, (char*)block + sizeof(TLocHeader))) {
+tloc_bool tloc_ValidBlock(tloc_allocator *allocator, tloc_header *block) {
+	if (tloc_ValidPointer(allocator, (void*)block) && tloc_ValidPointer(allocator, (char*)block + sizeof(tloc_header))) {
 		tloc_bool valid_prev_block = tloc_ValidPointer(allocator, (void*)block->prev_physical_block);
 		tloc_bool valid_next_block = tloc_ValidPointer(allocator, tloc__next_physical_block(block));
 		return valid_prev_block + valid_next_block;
@@ -498,8 +498,8 @@ static void tloc__output(void* ptr, size_t size, int free, void* user, int is_fi
 	}
 }
 
-tloc__error_codes tloc_VerifyBlocks(TLoc *allocator, tloc__block_output output_function, void *user_data) {
-	TLocHeader *current_block = allocator->first_block;
+tloc__error_codes tloc_VerifyBlocks(tloc_allocator *allocator, tloc__block_output output_function, void *user_data) {
+	tloc_header *current_block = allocator->first_block;
 	if (!tloc_ValidPointer(allocator, (void*)current_block)) {
 		return tloc__INVALID_FIRST_BLOCK;
 	}
@@ -518,14 +518,14 @@ tloc__error_codes tloc_VerifyBlocks(TLoc *allocator, tloc__block_output output_f
 	return tloc__OK;
 }
 
-tloc__error_codes tloc_VerifySegregatedLists(TLoc *allocator) {
+tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
 	tloc_index scan_result;
 	scan_result = tloc__scan_reverse(allocator->total_memory);
 	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
 	tloc_index second_level_index_count = 1 << allocator->second_level_index;
 	for (int fli = 0; fli != first_level_index_count; ++fli) {
 		for (int sli = 0; sli != second_level_index_count; ++sli) {
-			TLocHeader *block = allocator->segregated_lists[fli][sli];
+			tloc_header *block = allocator->segregated_lists[fli][sli];
 			if (block == tloc__end(allocator)) {
 				continue;
 			}
@@ -537,7 +537,7 @@ tloc__error_codes tloc_VerifySegregatedLists(TLoc *allocator) {
 	return tloc__OK;
 }
 
-tloc__error_codes tloc_VerifySecondLevelBitmapsAreInitialised(TLoc *allocator) {
+tloc__error_codes tloc_VerifySecondLevelBitmapsAreInitialised(tloc_allocator *allocator) {
 	tloc_index scan_result;
 	scan_result = tloc__scan_reverse(allocator->total_memory);
 	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
@@ -562,7 +562,7 @@ int main()
 		//printf("Size: %zu, fli: %i, sli: %i\n", i, fli, sli);
 	}
 	void *memory = malloc(size);
-	TLoc *allocator = tloc_InitialiseAllocator(memory, size, 5);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, 5);
 	assert(tloc_VerifyBlocks(allocator, tloc__output, 0) == tloc__OK);
 	int *some_ints = tloc_Allocate(allocator, 1024);
 	float *some_floats = tloc_Allocate(allocator, 4096);
