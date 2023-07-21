@@ -111,18 +111,22 @@ static inline int tloc__scan_forward(tloc_size bitmap)
       (defined(__i386__) || defined(__x86_64__)) || defined(__clang__)
 /* GNU C/C++ or Clang support on x86/x64 architectures. */
 
-static inline int tloc__scan_reverse(unsigned int bitmap)
+static inline int tloc__scan_reverse(tloc_size bitmap)
 {
-	unsigned long index;
-	asm("bsr %1, %0" : "=r"(index) : "r"(bitmap));
-	return index;
+#if defined(tloc__64BIT)
+	return 32 - __builtin_clz(bitmap) - 1;
+#else
+	return 64 - __builtin_clzll(bitmap) - 1;
+#endif
 }
 
-static inline int tloc__scan_forward(unsigned int bitmap)
+static inline int tloc__scan_forward(tloc_size bitmap)
 {
-	unsigned long index;
-	asm("bsf %1, %0" : "=r"(index) : "r"(bitmap));
-	return index;
+#if defined(tloc__64BIT)
+	return __builtin_ctz(bitmap) - 1;
+#else
+	return __builtin_ctzll(bitmap) - 1;
+#endif
 }
 
 #endif
