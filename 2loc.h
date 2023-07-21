@@ -114,18 +114,18 @@ static inline int tloc__scan_forward(tloc_size bitmap)
 static inline int tloc__scan_reverse(tloc_size bitmap)
 {
 #if defined(tloc__64BIT)
-	return 32 - __builtin_clz(bitmap) - 1;
+    return 64 - __builtin_clzll(bitmap) - 1;
 #else
-	return 64 - __builtin_clzll(bitmap) - 1;
+    return 32 - __builtin_clz((int)bitmap) - 1;
 #endif
 }
 
 static inline int tloc__scan_forward(tloc_size bitmap)
 {
 #if defined(tloc__64BIT)
-	return __builtin_ctz(bitmap) - 1;
+    return __builtin_ffsll(bitmap) - 1;
 #else
-	return __builtin_ctzll(bitmap) - 1;
+    return __builtin_ffs((int)bitmap) - 1;
 #endif
 }
 
@@ -414,7 +414,6 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_inde
 	//The size of the allocator + initial free memory should add up to the size of memory being used
 	assert(tloc__block_size(block) + lists_size + array_offset + tloc__POINTER_SIZE + tloc__BLOCK_SIZE_OVERHEAD == size);
 	//Make sure it aligns to nearest multiple of 4
-	tloc_size end_adjust = tloc__block_size(block);
 	tloc__set_block_size(block, tloc__align_size_down(tloc__block_size(block), tloc__MEMORY_ALIGNMENT));
 	allocator->end_of_pool = tloc__next_physical_block(block);
 	assert(tloc__block_size(block) > tloc__MINIMUM_BLOCK_SIZE);
