@@ -76,7 +76,6 @@ int TestAllocateMultiOverAllocate() {
 	return result;
 }
 
-//64bit tests
 //Test allocating some memory that is too small
 int TestAllocationTooSmall() {
 	tloc_size size = 1024 * 1024;
@@ -93,6 +92,7 @@ int TestAllocationTooSmall() {
 	return result;
 }
 
+//64bit tests
 #if defined(tloc__64BIT)
 //Allocate a large block
 int TestAllocation64bit() {
