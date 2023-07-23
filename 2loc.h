@@ -1,3 +1,80 @@
+
+/*	2Loc, a Two Level Segregated Fit memory allocator
+
+	This software is dual-licensed to the public domain and under the following
+	license: you are granted a perpetual, irrevocable license to copy, modify,
+	publish, and distribute this file as you see fit.
+
+	This library is based on the following paper:
+
+	TLSF: a New Dynamic Memory Allocator for Real-Time Systems
+	M. Masmano, I. Ripoll, A. Crespo, and J. Real Universidad Politecnica de Valencia, Spain
+	http://www.gii.upv.es/tlsf/files/ecrts04_tlsf.pdf
+
+	Thanks to the authors of the paper and also Sean Barret for his how to make a single header-file
+	library, and also to Matthew Conte who's own TLSF lib I referenced when trying to understand how
+	the algorythm works. His library can be found here: https://github.com/mattconte/tlsf
+
+	What's this library for?
+	This library is for sub allocating memory blocks within a larger memory allocation that you might
+	create with malloc or VirtualAlloc etc. 
+	
+	Allocation and freeing those memory blocks happens at O(1) time complexity and should for the most 
+	part keep fragmentation at a minimum.
+
+	What's the ideal usage?
+	I wrote this for a particle effects library that I'm working on where I want to allocate a large
+	block of memory up front and then to efficiently allocate within that block rather then have a whole
+	bunch of mallocs getting created and freed all the time. Particle effects generally require a lot of 
+	dynamic allocations and it can get messy quick. It would also be nice that anyone that wants to use my
+	particle effects library can know precisely how much memory is in use by the library and have an
+	easy way of dumping that to disk if they wanted to snapshot the current state of whatever game they're
+	working on. That's a big pain to do if you're allocating memory all over the place.
+
+	This way they can initialise the libray with a specific amount of memory and know that the library will
+	use no more then that and gracefully fail if the library runs out of memory to use.
+
+	How do I use it?
+	Add:
+	#define TLOC_IMPLEMENTATION
+	before you include this file in *one* C or C++ file to create the implementation.
+
+   // i.e. it should look like this:
+	#include ...
+	#include ...
+	#include ...
+	#define TLOC_IMPLEMENTATION
+	#include "2loc.h"
+
+	The interface is very straightforward. Simply allocate a block of memory that you want to use for your
+	pool and then call tloc_Allocate to allocate blocks with that pool and tloc_Free when you're done with
+	an allocation. Don't forget to free the orinal memory you created in the first place. The Allocator doesn't
+	care what you use to create the memory to use only that it's read and writable to.
+
+	Here's a basic usage example:
+
+	size_t size = 1024 * 1024 * 128;	//128MB
+	void *memory = malloc(size);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
+	if (!allocator) {
+		Something went wrong, unable to initialise the allocator
+	}
+	int *int_allocation = tloc_Allocate(allocator, sizeof(int) * 10);
+	if(int_allocation) {
+		for (int i = 0; i != 10; ++i) {
+			int_allocation[i] = rand();
+		}
+		for (int i = 0; i != 10; ++i) {
+			printf("%i\n", int_allocation[i]);
+		}
+		assert(tloc_Free(allocator, int_allocation));
+	} else {
+		//Unable to allocate
+	}
+	free(memory);
+
+*/
+
 #ifndef TLOC_INCLUDE_H
 #define TLOC_INCLUDE_H
 
@@ -64,6 +141,7 @@ enum tloc__constants {
 	tloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
 	tloc__MINIMUM_BLOCK_SIZE = 16,
 	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
+	tloc__SECOND_LEVEL_INDEX = 1 << tloc__SECOND_LEVEL_INDEX_LOG2,
 	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
 	tloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(tloc_size),
 	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
@@ -231,11 +309,10 @@ tloc_bool tloc_CheckForNullBlocksInList(tloc_allocator *allocator);
 int tloc_BlockCount(tloc_allocator *allocator);
 
 //Private inline functions, user doesn't need to call these
-static inline void tloc__map(tloc_size size, tloc_uint sub_div_log2, tloc_index *fli, tloc_index *sli) {
-	tloc_index max_sli = 1 << sub_div_log2;
+static inline void tloc__map(tloc_size size, tloc_index *fli, tloc_index *sli) {
 	*fli = tloc__scan_reverse(size);
 	size = size & ~(1 << *fli);
-	*sli = (tloc_index)(size >> (*fli - sub_div_log2)) % max_sli;
+	*sli = (tloc_index)(size >> (*fli - tloc__SECOND_LEVEL_INDEX_LOG2)) % tloc__SECOND_LEVEL_INDEX;
 }
 
 static inline tloc_bool tloc__has_free_block(tloc_allocator *allocator, tloc_index fli, tloc_index sli) {
@@ -368,7 +445,7 @@ static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *bloc
 	tloc_index fi;
 	tloc_index si;
 	//Get the size class of the block
-	tloc__map(tloc__block_size(block), tloc__SECOND_LEVEL_INDEX_LOG2, &fi, &si);
+	tloc__map(tloc__block_size(block), &fi, &si);
 	tloc_header *current_block_in_free_list = allocator->segregated_lists[fi][si];
 	//Insert the block into the list by updating the next and prev free blocks of
 	//this and the current block in the free list. The current block in the free
@@ -422,7 +499,7 @@ static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index
 static inline void tloc__remove_block_from_segregated_list(tloc_allocator *allocator, tloc_header *block) {
 	tloc_index fli, sli;
 	//Get the size class
-	tloc__map(tloc__block_size(block), tloc__SECOND_LEVEL_INDEX_LOG2, &fli, &sli);
+	tloc__map(tloc__block_size(block), &fli, &sli);
 	tloc_header *prev_block = block->prev_free_block;
 	tloc_header *next_block = block->next_free_block;
 	assert(prev_block);
@@ -680,10 +757,10 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too small. Minimum size is %u but trying to allocate %zu bytes\n", TLOC_ERROR_NAME, tloc__MINIMUM_BLOCK_SIZE, size);
 		return NULL;
 	}
-	tloc__map(size, tloc__SECOND_LEVEL_INDEX_LOG2, &fli, &sli);
+	tloc__map(size, &fli, &sli);
 	//Note that there may well be an appropriate size block in the class but that block may not be at the head of the list
-	//In this situation we could opt to loop through the list of the size class to size if there is an appropriate size but instead
-	//we stick to the paper and just move on to the next class this up to keep a O1 speed at the cost of fragmentation
+	//In this situation we could opt to loop through the list of the size class to see if there is an appropriate size but instead
+	//we stick to the paper and just move on to the next class up to keep a O1 speed at the cost of some extra fragmentation
 	if (tloc__has_free_block(allocator, fli, sli) && tloc__block_size(allocator->segregated_lists[fli][sli]) >= size) {
 		return tloc__block_user_ptr(tloc__pop_block(allocator, fli, sli));
 	}
@@ -896,7 +973,7 @@ tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
 			tloc_header *block = allocator->segregated_lists[fli][sli];
 			if (block->size) {
 				tloc_index size_fli, size_sli;
-				tloc__map(tloc__block_size(block), tloc__SECOND_LEVEL_INDEX_LOG2, &size_fli, &size_sli);
+				tloc__map(tloc__block_size(block), &size_fli, &size_sli);
 				if (size_fli != fli && size_sli != sli) {
 					return tloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST;
 				}
