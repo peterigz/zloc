@@ -335,6 +335,60 @@ int TestAllocatingUntilOutOfSpaceThenFreeAll(tloc_uint iterations, tloc_size poo
 	return result;
 }
 
+//Do lots of allocations and frees, the reset the allocator, and repeat
+int TestManyAllocationsAndFreesWithReset(tloc_uint iterations, tloc_size pool_size, tloc_size min_allocation_size, tloc_size max_allocation_size) {
+	int result = 1;
+	void *memory = malloc(pool_size);
+	memset(memory, 0, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, pool_size);
+	if (!allocator) {
+		result = 0;
+		tloc_free_memory(memory);
+	}
+	else {
+		void *allocations[100];
+		memset(allocations, 0, sizeof(void*) * 100);
+		for (int i = 0; i != iterations; ++i) {
+			int index = rand() % 100;
+			if (allocations[index]) {
+				tloc_Free(allocator, allocations[index]);
+				allocations[index] = 0;
+			}
+			else {
+				tloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
+				allocations[index] = tloc_Allocate(allocator, allocation_size);
+				if (allocations[index]) {
+					//Do a memset set to test if we're overwriting block headers
+					memset(allocations[index], 7, allocation_size);
+				}
+			}
+			assert(tloc_CheckForNullBlocksInList(allocator));
+			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
+		}
+		tloc_Reset(allocator);
+		memset(allocations, 0, sizeof(void*) * 100);
+		for (int i = 0; i != iterations; ++i) {
+			int index = rand() % 100;
+			if (allocations[index]) {
+				tloc_Free(allocator, allocations[index]);
+				allocations[index] = 0;
+			}
+			else {
+				tloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
+				allocations[index] = tloc_Allocate(allocator, allocation_size);
+				if (allocations[index]) {
+					//Do a memset set to test if we're overwriting block headers
+					memset(allocations[index], 7, allocation_size);
+				}
+			}
+			assert(tloc_CheckForNullBlocksInList(allocator));
+			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
+		}
+		tloc_free_memory(memory);
+	}
+	return result;
+}
+
 //64bit tests
 #if defined(tloc__64BIT)
 //Allocate a large block
@@ -373,6 +427,7 @@ int main() {
 	PrintTestResult("Test: Many random allocations and frees: 10000 iterations, 128MB pool size, max allocation: 64kb - 1MB", TestManyAllocationsAndFrees(1000, tloc__MEGABYTE(128), 64 * 1024, tloc__MEGABYTE(1)));
 	PrintTestResult("Test: Many random allocations and frees: 10000 iterations, 128MB pool size, max allocation: 1MB - 2MB", TestManyAllocationsAndFrees(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(1), tloc__MEGABYTE(2)));
 	PrintTestResult("Test: Many random allocations and frees: 10000 iterations, 128MB pool size, max allocation: 2MB - 10MB", TestManyAllocationsAndFrees(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(2), tloc__MEGABYTE(10)));
+	PrintTestResult("Test: Many random allocations and frees, reset then run it again", TestManyAllocationsAndFreesWithReset(1000, tloc__MEGABYTE(128), 64 * 1024, tloc__MEGABYTE(1)));
 #if defined(tloc__64BIT)
 	PrintTestResult("Test: Many random allocations and frees: 10000 iterations, 1GB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, tloc__GIGABYTE(1), tloc__MEGABYTE(2), tloc__MEGABYTE(100)));
 #else

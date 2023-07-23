@@ -12,7 +12,7 @@
 	http://www.gii.upv.es/tlsf/files/ecrts04_tlsf.pdf
 
 	Thanks to the authors of the paper and also Sean Barret for his how to make a single header-file
-	library, and also to Matthew Conte who's own TLSF lib I referenced when trying to understand how
+	library guidelines, and also to Matthew Conte who's own TLSF lib I referenced when trying to understand how
 	the algorythm works. His library can be found here: https://github.com/mattconte/tlsf
 
 	What's this library for?
@@ -47,9 +47,9 @@
 	#include "2loc.h"
 
 	The interface is very straightforward. Simply allocate a block of memory that you want to use for your
-	pool and then call tloc_Allocate to allocate blocks with that pool and tloc_Free when you're done with
+	pool and then call tloc_Allocate to allocate blocks within that pool and tloc_Free when you're done with
 	an allocation. Don't forget to free the orinal memory you created in the first place. The Allocator doesn't
-	care what you use to create the memory to use only that it's read and writable to.
+	care what you use to create the memory to use with the allocator only that it's read and writable to.
 
 	Here's a basic usage example:
 
@@ -59,9 +59,9 @@
 	if (!allocator) {
 		Something went wrong, unable to initialise the allocator
 	}
-	int *int_allocation = tloc_Allocate(allocator, sizeof(int) * 10);
+	int *int_allocation = tloc_Allocate(allocator, sizeof(int) * 100);
 	if(int_allocation) {
-		for (int i = 0; i != 10; ++i) {
+		for (int i = 0; i != 100; ++i) {
 			int_allocation[i] = rand();
 		}
 		for (int i = 0; i != 10; ++i) {
@@ -72,6 +72,8 @@
 		//Unable to allocate
 	}
 	free(memory);
+
+	You can also take a look at the tests.c file for more examples of usage.
 
 */
 
@@ -276,6 +278,14 @@ TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
 	@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
 */
 TLOC_API int tloc_Free(tloc_allocator *allocator, void *allocation);
+
+/*
+	Reset an allocator back to it's initialised state. All allocations will be freed so make sure you don't try to reference or free any allocations
+	after doing this.
+
+	@param tloc_allocator*			A pointer to a tcoc_allocator that you want to reset
+*/
+TLOC_API void tloc_Reset(tloc_allocator *allocator);
 
 /*
 	Get the total size of the memory pool available for allocating after taking into account the allocator overhead
@@ -714,7 +724,7 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 
 	//The size of the allocator + initial free memory should add up to the size of memory being used
 	assert(tloc__block_size(block) + lists_size + array_offset + tloc__POINTER_SIZE + tloc__BLOCK_SIZE_OVERHEAD == size);
-	//Make sure it aligns to nearest multiple of 4
+	//Make sure it aligns
 	tloc__set_block_size(block, tloc__align_size_down(tloc__block_size(block), tloc__MEMORY_ALIGNMENT));
 	allocator->end_of_pool = tloc__next_physical_block(block);
 	assert(tloc__block_size(block) > tloc__MINIMUM_BLOCK_SIZE);
@@ -742,6 +752,12 @@ tloc_size tloc_CalculateAllocationSize(tloc_size size) {
 	tloc_size lists_size = segregated_list_size + size_of_second_level_bitmap_list;
 
 	return tloc__align_size_up(array_offset + lists_size + size, tloc__MEMORY_ALIGNMENT);
+}
+
+void tloc_Reset(tloc_allocator *allocator) {
+	tloc_size size = allocator->total_memory;
+	memset(allocator, 0, allocator->total_memory);
+	tloc_InitialiseAllocator(allocator, size);
 }
 
 tloc_size tloc_AllocatorPoolSize(tloc_allocator *allocator) {
