@@ -1,8 +1,6 @@
 #ifndef TLOC_INCLUDE_H
 #define TLOC_INCLUDE_H
 
-//#define TLOC_DEV_MODE
-
 #include <stdlib.h>
 #include <assert.h>
 
@@ -37,21 +35,21 @@ typedef int tloc_bool;
 #define TLOC_ERROR_NAME "Allocator Error"
 #endif
 
+#ifndef TLOC_ERROR_COLOR
+#define TLOC_ERROR_COLOR "\033[31m"
+#endif
+
 #ifdef TLOC_OUTPUT_ERROR_MESSAGES
 #include <stdio.h>
-#define TLOC_PRINT_ERROR(message_f, ...) printf(message_f, __VA_ARGS__)
+#define TLOC_PRINT_ERROR(message_f, ...) printf(message_f"\033[0m", __VA_ARGS__)
 #else
 #define TLOC_PRINT_ERROR(message_f, ...)
 #endif
 
-#ifdef TLOC_OUTPUT_LOG_MESSAGES
-#include <stdio.h>
-#define TLOC_LOG(message_f, ...) printf(message_f, __VA_ARGS__)
-#else
-#define TLOC_LOG(message_f, ...)
-#endif
-
 #define MIN_BLOCK_SIZE 16
+#define tloc__KILOBYTE(Value) ((Value) * 1024LL)
+#define tloc__MEGABYTE(Value) (tloc__KILOBYTE(Value) * 1024LL)
+#define tloc__GIGABYTE(Value) (tloc__MEGABYTE(Value) * 1024LL)
 
 #ifdef __cplusplus
 extern "C" {
@@ -65,6 +63,7 @@ typedef enum tloc__boundary_tag_flags {
 enum tloc__constants {
 	tloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
 	tloc__MINIMUM_BLOCK_SIZE = 16,
+	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
 	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
 	tloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(tloc_size),
 	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
@@ -90,7 +89,6 @@ typedef struct tloc_header {
 
 typedef struct tloc_allocator {
 	tloc_header end_block;
-	tloc_index second_level_index;
 	tloc_header *first_block;
 	void *end_of_pool;
 	size_t total_memory;
@@ -148,17 +146,89 @@ static inline int tloc__scan_forward(tloc_size bitmap)
 
 #endif
 
+/*
+User functions
+This are the main functions you'll need to use this library, everything else is either internal private functions or functions for debugging
+*/
+
+/*
+	Initialise an allocator. Pass a block of memory that you want to use with the allocator, this can be created with malloc or VirtualAlloc
+	or whatever your preference.
+	Make sure the size matches the size of the memory you're passing
+
+	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
+	@param	tloc_size				The size of the memory you're passing
+	@returns tloc_allocator*		A pointer to a tloc_allocator which you'll need to use when calling tloc_Allocate or tloc_Free. Note that
+									this pointer will be the same address as the memory you're passing in as all the information the allocator
+									stores to organise memory blocks is stored at the beginning of the memory.
+									If something went wrong then 0 is returned. Define TLOC_OUTPUT_ERROR_MESSAGES before including this header
+									file to see any errors in the console.
+*/
+TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size);
+
+/*
+	A helper function to find the allocation size that takes into account the overhead of the allocator. So for example, let's say you want
+	to allocate 128mb for a pool of memory, this function will take that size and return a new size that will include the extra overhead required
+	by the allocator. The overhead inlcudes things like the first and second level bitmaps and the segregated list that stores pointers to free
+	blocks. Note that the size will be rounded up to the nearest tloc__MEMORY_ALIGNMENT.
+
+	@param	tloc_size				The size that you want the memory pool to be
+	@returns tloc_size				The calculated size that will now include the required extra overhead for the allocator. You can now pass this
+									size to tloc_InitialiseAllocator.
+*/
+TLOC_API tloc_size tloc_CalculateAllocationSize(tloc_size size);
+
+/*
+	Allocate some memory within a tloc_allocator of the specified size. Minimum size is 16 bytes. 
+
+	@param	tloc_size				The size of the memory you're passing
+	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to 
+									no free memory.
+*/
+TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
+
+/*
+	Free an allocation from a tloc_allocator. When freeing a block of memory any adjacent free blocks are merged together to keep on top of 
+	fragmentation as much as possible. A check is also done to confirm that the block being freed is still valid and detect any memory corruption
+	due to out of bounds writing of this or potentially other blocks.  
+
+	It's recommended to call this function with an assert: assert(tloc_Free(allocator, allocation));
+	An error is also output to console as long as TLOC_OUTPUT_ERROR_MESSAGES is defined.
+
+	@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
+*/
+TLOC_API int tloc_Free(tloc_allocator *allocator, void *allocation);
+
+/*
+	Get the total size of the memory pool available for allocating after taking into account the allocator overhead
+
+	@param tloc_allocator*			A pointer to a tcoc_allocator
+	@returnst loc_size				This size of available pool memory
+*/
+TLOC_API tloc_size tloc_AllocatorPoolSize(tloc_allocator *allocator);
+
+//--End of user functions
+
 //Debugging
 typedef void(*tloc__block_output)(void* ptr, size_t size, int used, void* user, int is_final_output);
+//Loops through all blocks in the allocator and confirms that they all correctly link together
 tloc__error_codes tloc_VerifyBlocks(tloc_allocator *allocator, tloc__block_output output_function, void *user_data);
-tloc_header *tloc_SearchList(tloc_allocator *allocator, tloc_header *search);
+//Makes sure that all blocks in the segregated list of free blocks are all valid
 tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator);
+//All Second level bitmaps should be initialised to 0
 tloc__error_codes tloc_VerifySecondLevelBitmapsAreInitialised(tloc_allocator *allocator);
+//A valid pointer in the context of an allocator is one that points within the bounds of the memory assigned to the allocator
 tloc_bool tloc_ValidPointer(tloc_allocator *allocator, void *pointer);
+//Checks all pointers within the block are valid
 tloc_bool tloc_ValidBlock(tloc_allocator *allocator, tloc_header *block);
+//Checks to see if the block links up correctly with neighbouring blocks
 tloc_bool tloc_ConfirmBlockLink(tloc_allocator *allocator, tloc_header *block);
+//Search the segregated list of free blocks for a given block
 tloc_bool tloc_BlockExistsInSegregatedList(tloc_allocator *allocator, tloc_header* block);
+//The segregated list of free blocks should never contain any null blocks, this seeks them out.
 tloc_bool tloc_CheckForNullBlocksInList(tloc_allocator *allocator);
+//Get a count of all blocks in the allocator, whether or not they're free or used.
+int tloc_BlockCount(tloc_allocator *allocator);
 
 //Private inline functions, user doesn't need to call these
 static inline void tloc__map(tloc_size size, tloc_uint sub_div_log2, tloc_index *fli, tloc_index *sli) {
@@ -248,22 +318,46 @@ static inline void tloc__zero_block(tloc_header *block) {
 
 static inline void tloc__mark_block_as_used(tloc_allocator *allocator, tloc_header *block) {
 	block->size &= ~tloc__BLOCK_IS_FREE;
-	TLOC_LOG("Marking block %p as used. Block size: %zu\n", block, tloc__block_size(block));
 	if (!tloc__is_last_block(allocator, block)) {
 		tloc_header *next_block = tloc__next_physical_block(block);
-		TLOC_LOG("Marking next block %p as prev used. Block size: %zu\n", next_block, tloc__block_size(next_block));
 		next_block->size &= ~tloc__PREV_BLOCK_IS_FREE;
 	}
 }
 
 static inline void tloc__mark_block_as_free(tloc_allocator *allocator, tloc_header *block) {
 	block->size |= tloc__BLOCK_IS_FREE;
-	TLOC_LOG("Marking block %p as free. Block size: %zu\n", block, tloc__block_size(block));
 	if (!tloc__is_last_block(allocator, block)) {
 		tloc_header *next_block = tloc__next_physical_block(block);
-		TLOC_LOG("Marking next block %p as prev free. Block size: %zu\n", next_block, tloc__block_size(next_block));
 		next_block->size |= tloc__PREV_BLOCK_IS_FREE;
 	}
+}
+
+static inline tloc_bool tloc__valid_allocation_pointer(tloc_allocator *allocator, tloc_header *block) {
+	void *block_address = (void*)block;
+	return block >= allocator->first_block && block_address < allocator->end_of_pool && (void*)block->prev_physical_block >= (void*)allocator && (void*)block->prev_physical_block < allocator->end_of_pool && block->size > 0 && block->size <= allocator->total_memory;
+}
+
+static inline tloc_bool tloc__valid_block(tloc_allocator *allocator, tloc_header *block) {
+	int result = 0;
+	if (block->prev_physical_block != tloc__end(allocator)) {
+		ptrdiff_t diff = (char*)block - (char*)block->prev_physical_block;
+		result += tloc__block_size(block->prev_physical_block) + tloc__BLOCK_POINTER_OFFSET == diff;
+	}
+	else {
+		result += 1;
+	}
+	if (!tloc__is_last_block(allocator, block)) {
+		tloc_header *next_block = tloc__next_physical_block(block);
+		ptrdiff_t diff = (char*)next_block - (char*)block;
+		result += next_block->prev_physical_block == block && tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET == diff;
+	}
+	else {
+		result += 1;
+	}
+	if (result != 2) {
+		int d = 0;
+	}
+	return result == 2;
 }
 
 /*
@@ -271,11 +365,10 @@ static inline void tloc__mark_block_as_free(tloc_allocator *allocator, tloc_head
 	merged if possible before this is called
 */
 static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *block) {
-
 	tloc_index fi;
 	tloc_index si;
 	//Get the size class of the block
-	tloc__map(tloc__block_size(block), allocator->second_level_index, &fi, &si);
+	tloc__map(tloc__block_size(block), tloc__SECOND_LEVEL_INDEX_LOG2, &fi, &si);
 	tloc_header *current_block_in_free_list = allocator->segregated_lists[fi][si];
 	//Insert the block into the list by updating the next and prev free blocks of
 	//this and the current block in the free list. The current block in the free
@@ -329,7 +422,7 @@ static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index
 static inline void tloc__remove_block_from_segregated_list(tloc_allocator *allocator, tloc_header *block) {
 	tloc_index fli, sli;
 	//Get the size class
-	tloc__map(tloc__block_size(block), allocator->second_level_index, &fli, &sli);
+	tloc__map(tloc__block_size(block), tloc__SECOND_LEVEL_INDEX_LOG2, &fli, &sli);
 	tloc_header *prev_block = block->prev_free_block;
 	tloc_header *next_block = block->next_free_block;
 	assert(prev_block);
@@ -464,26 +557,6 @@ static inline void tloc__merge_with_next_block_if_free(tloc_allocator *allocator
 }
 //--End of internal functions
 
-//User functions
-/*
-	Initialise an allocator. Pass a block of memory that you want to use with the allocator, this can be created with malloc or VirtualAlloc 
-	or whatever your preference.
-	Make sure the size matches the size of the memory you're passing and specify the second level index.
-
-	@returns tloc_allocator*		A pointer to a tloc_allocator which you'll need to use when calling tloc_Allocate or tloc_Free
-*/
-TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_level_index);
-
-/*
-	Allocate some memory within a tloc_allocator of the specified size. Minimum size is 16 bytes
-*/
-TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
-
-/*
-	Free an allocation from a tloc_allocator
-*/
-TLOC_API void tloc_Free(tloc_allocator *allocator, void *allocation);
-
 //--End of header declarations
 
 #ifdef __cplusplus
@@ -493,7 +566,7 @@ TLOC_API void tloc_Free(tloc_allocator *allocator, void *allocation);
 #endif
 
 //Implementation
-#if defined(TLOC_IMPLEMENTATION) || defined(TLOC_DEV_MODE)
+#if defined(TLOC_IMPLEMENTATION)
 
 #include <math.h>
 #include <limits.h>
@@ -501,20 +574,19 @@ TLOC_API void tloc_Free(tloc_allocator *allocator, void *allocation);
 #include <string.h>
 
 //Definitions
-tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_index second_level_index) {
+tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	if (!memory) {
-		TLOC_PRINT_ERROR("%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", TLOC_ERROR_NAME);
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", TLOC_ERROR_NAME);
 		return 0;
 	}
 	if (!tloc__is_aligned(size, tloc__MEMORY_ALIGNMENT)) {
-		TLOC_PRINT_ERROR("%s: memory passed to allocator is not aligned to: %u bytes\n", TLOC_ERROR_NAME, tloc__MEMORY_ALIGNMENT);
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: memory passed to allocator is not aligned to: %u bytes\n", TLOC_ERROR_NAME, tloc__MEMORY_ALIGNMENT);
 		return 0;
 	}
 	tloc_allocator *allocator = (tloc_allocator*)memory;
 	memset(allocator, 0, sizeof(tloc_allocator));
 	allocator->end_block.next_free_block = &allocator->end_block;
 	allocator->end_block.prev_free_block = &allocator->end_block;
-	allocator->second_level_index = second_level_index;
 	size_t array_offset = sizeof(tloc_allocator);
 
 	tloc_index scan_result;
@@ -522,7 +594,7 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_inde
 	scan_result = tloc__scan_reverse(size);
 	tloc_uint first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
 	//Each first level size class then splits into finer classes by the second level index log2
-	tloc_uint second_level_index_count = 1 << second_level_index;
+	tloc_uint second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
 
 	//We store the lists containing pointers to the first free block for each of those category classed at the start of the memory
 	//pool as well.
@@ -538,7 +610,7 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_inde
 	tloc_uint lists_size = segregated_list_size + size_of_second_level_bitmap_list;
 	size_t minimum_size = lists_size + tloc__MINIMUM_BLOCK_SIZE + array_offset + tloc__BLOCK_POINTER_OFFSET;
 	if (size < minimum_size) {
-		TLOC_PRINT_ERROR("%s: Tried to initialise allocator with a memory pool that is too small. Must be at least: %zi bytes\n", TLOC_ERROR_NAME, minimum_size);
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to initialise allocator with a memory pool that is too small. Must be at least: %zi bytes\n", TLOC_ERROR_NAME, minimum_size);
 		return 0;
 	}
 
@@ -581,22 +653,41 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_inde
 	return allocator;
 }
 
+tloc_size tloc_CalculateAllocationSize(tloc_size size) {
+	tloc_size array_offset = sizeof(tloc_allocator);
+	tloc_index scan_result;
+	scan_result = tloc__scan_reverse(size);
+	tloc_uint first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
+	tloc_uint second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
+
+	tloc_uint size_of_second_level_bitmap_list = first_level_index_count * sizeof(tloc_index);
+	tloc_uint segregated_list_size = (second_level_index_count * tloc__POINTER_SIZE * first_level_index_count) + (first_level_index_count * tloc__POINTER_SIZE);
+	tloc_size lists_size = segregated_list_size + size_of_second_level_bitmap_list;
+
+	return tloc__align_size_up(array_offset + lists_size + size, tloc__MEMORY_ALIGNMENT);
+}
+
+tloc_size tloc_AllocatorPoolSize(tloc_allocator *allocator) {
+	ptrdiff_t diff = (char*)allocator->end_of_pool - (char*)allocator->first_block;
+	return diff;
+}
+
 void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	tloc_index fli;
 	tloc_index sli;
 	size = tloc__align_size_up(size, tloc__MEMORY_ALIGNMENT);
-	if (size == 16736) {
-		int d = 0;
-	}
 	if (size < tloc__MINIMUM_BLOCK_SIZE) {
-		TLOC_PRINT_ERROR("%s: Trying to allocate a block size that is too small. Minimum size is %u but trying to allocate %zu bytes\n", TLOC_ERROR_NAME, tloc__MINIMUM_BLOCK_SIZE, size);
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too small. Minimum size is %u but trying to allocate %zu bytes\n", TLOC_ERROR_NAME, tloc__MINIMUM_BLOCK_SIZE, size);
 		return NULL;
 	}
-	tloc__map(size, allocator->second_level_index, &fli, &sli);
-	if (tloc__has_free_block(allocator, fli, sli)) {
+	tloc__map(size, tloc__SECOND_LEVEL_INDEX_LOG2, &fli, &sli);
+	//Note that there may well be an appropriate size block in the class but that block may not be at the head of the list
+	//In this situation we could opt to loop through the list of the size class to size if there is an appropriate size but instead
+	//we stick to the paper and just move on to the next class this up to keep a O1 speed at the cost of fragmentation
+	if (tloc__has_free_block(allocator, fli, sli) && tloc__block_size(allocator->segregated_lists[fli][sli]) >= size) {
 		return tloc__block_user_ptr(tloc__pop_block(allocator, fli, sli));
 	}
-	if (sli == (1 << allocator->second_level_index) - 1) {
+	if (sli == (1 << tloc__SECOND_LEVEL_INDEX_LOG2) - 1) {
 		sli = -1;
 	}
 	else {
@@ -621,12 +712,20 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 		return allocation;
 	}
 	//Out of memory;
-	TLOC_PRINT_ERROR("%s: Not enough memory in pool to allocate %zu bytes\n", TLOC_ERROR_NAME, size);
+	TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Not enough memory in pool to allocate %zu bytes\n", TLOC_ERROR_NAME, size);
 	return NULL;
 }
 
-void tloc_Free(tloc_allocator *allocator, void* allocation) {
-	tloc_header *block = (tloc_header*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
+int tloc_Free(tloc_allocator *allocator, void* allocation) {
+	tloc_header *block = tloc__block_from_allocation(allocation);
+	if (!tloc__valid_allocation_pointer(allocator, block)) {
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to free an invalid allocation. Pointer doesn't point to a valid block in the allocator or potentially writes were made outside of the allocation bounds.\n", TLOC_ERROR_NAME);
+		return 0;
+	}
+	if (!tloc__valid_block(allocator, block)) {
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Memory corruption detected. Block you are trying to free no longer links with other blocks correctly suggesting that writes were made outside of the allocation bounds.\n", TLOC_ERROR_NAME);
+		return 0;
+	}
 	if (tloc__prev_is_free_block(block)) {
 		assert(block->prev_physical_block);		//Must be a valid previous physical block
 		block = tloc__merge_with_prev_block(allocator, block);
@@ -635,8 +734,18 @@ void tloc_Free(tloc_allocator *allocator, void* allocation) {
 		tloc__merge_with_next_block_if_free(allocator, block);
 	}
 	tloc__push_block(allocator, block);
+	return 1;
 }
 
+int tloc_BlockCount(tloc_allocator *allocator) {
+	tloc_header *current_block = allocator->first_block;
+	int count = 1;
+	while (!tloc__is_last_block(allocator, current_block)) {
+		count++;
+		current_block = tloc__next_physical_block(current_block);
+	}
+	return count;
+}
 
 //--- Debugging tools
 tloc_bool tloc_ValidPointer(tloc_allocator *allocator, void *pointer) {
@@ -743,7 +852,7 @@ tloc_bool tloc_CheckForNullBlocksInList(tloc_allocator *allocator) {
 	tloc_index scan_result;
 	scan_result = tloc__scan_reverse(allocator->total_memory);
 	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
-	tloc_index second_level_index_count = 1 << allocator->second_level_index;
+	tloc_index second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
 	for (int fli = 0; fli != first_level_index_count; ++fli) {
 		if (allocator->first_level_bitmap & (1ULL << fli)) {
 			for (int sli = 0; sli != second_level_index_count; ++sli) {
@@ -762,7 +871,7 @@ tloc_bool tloc_BlockExistsInSegregatedList(tloc_allocator *allocator, tloc_heade
 	tloc_index scan_result;
 	scan_result = tloc__scan_reverse(allocator->total_memory);
 	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
-	tloc_index second_level_index_count = 1 << allocator->second_level_index;
+	tloc_index second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
 	for (int fli = 0; fli != first_level_index_count; ++fli) {
 		for (int sli = 0; sli != second_level_index_count; ++sli) {
 			tloc_header *current = allocator->segregated_lists[fli][sli];
@@ -781,13 +890,13 @@ tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
 	tloc_index scan_result;
 	scan_result = tloc__scan_reverse(allocator->total_memory);
 	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
-	tloc_index second_level_index_count = 1 << allocator->second_level_index;
+	tloc_index second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
 	for (int fli = 0; fli != first_level_index_count; ++fli) {
 		for (int sli = 0; sli != second_level_index_count; ++sli) {
 			tloc_header *block = allocator->segregated_lists[fli][sli];
 			if (block->size) {
 				tloc_index size_fli, size_sli;
-				tloc__map(tloc__block_size(block), allocator->second_level_index, &size_fli, &size_sli);
+				tloc__map(tloc__block_size(block), tloc__SECOND_LEVEL_INDEX_LOG2, &size_fli, &size_sli);
 				if (size_fli != fli && size_sli != sli) {
 					return tloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST;
 				}
@@ -816,24 +925,4 @@ tloc__error_codes tloc_VerifySecondLevelBitmapsAreInitialised(tloc_allocator *al
 }
 
 //--- End Debugging tools
-#endif
-
-#if defined(TLOC_DEV_MODE)
-int main()
-{
-	tloc_size size = (1024ull * 1024ull * 1024ull * 1ull);	//1 gb
-	void *memory = malloc(size);
-	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, 5);
-	assert(tloc_VerifyBlocks(allocator, tloc__output, 0) == tloc__OK);
-	int *some_ints = tloc_Allocate(allocator, 1024);
-	float *some_floats = tloc_Allocate(allocator, 4096);
-	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
-	assert(tloc_VerifyBlocks(allocator, tloc__output, 0) == tloc__OK);
-	tloc_Free(allocator, some_ints);
-	assert(tloc_VerifyBlocks(allocator, tloc__output, 0) == tloc__OK);
-	tloc_Free(allocator, some_floats);
-	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
-	assert(tloc_VerifyBlocks(allocator, tloc__output, 0) == tloc__OK);
-	free(memory);
-}
 #endif
