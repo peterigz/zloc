@@ -1,6 +1,6 @@
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
-#define TLOC_OUTPUT_ERROR_MESSAGES
+//#define TLOC_OUTPUT_ERROR_MESSAGES
 #include <stdio.h>
 
 #if !defined(TLOC_DEV_MODE)
@@ -12,6 +12,127 @@
 void PrintTestResult(const char *message, int result) {
 	printf("%s", message);
 	printf("%s [%s]\033[0m\n", result == 0 ? "\033[31m" : "\033[32m", result == 0 ? "FAILED" : "PASSED");
+}
+
+//Some helper functions for debugging
+//Makes sure that all blocks in the segregated list of free blocks are all valid
+tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
+	tloc_index scan_result;
+	scan_result = tloc__scan_reverse(allocator->total_memory);
+	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
+	tloc_index second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
+	for (int fli = 0; fli != first_level_index_count; ++fli) {
+		for (int sli = 0; sli != second_level_index_count; ++sli) {
+			tloc_header *block = allocator->segregated_lists[fli][sli];
+			if (block->size) {
+				tloc_index size_fli, size_sli;
+				tloc__map(tloc__block_size(block), &size_fli, &size_sli);
+				if (size_fli != fli && size_sli != sli) {
+					return tloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST;
+				}
+			}
+			if (block == tloc__end(allocator)) {
+				continue;
+			}
+			else if (!tloc_ValidBlock(allocator, allocator->segregated_lists[fli][sli])) {
+				return tloc__INVALID_SEGRATED_LIST;
+			}
+		}
+	}
+	return tloc__OK;
+}
+
+//The segregated list of free blocks should never contain any null blocks, this seeks them out.
+tloc_bool tloc_CheckForNullBlocksInList(tloc_allocator *allocator) {
+	tloc_index scan_result;
+	scan_result = tloc__scan_reverse(allocator->total_memory);
+	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
+	tloc_index second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
+	for (int fli = 0; fli != first_level_index_count; ++fli) {
+		if (allocator->first_level_bitmap & (1ULL << fli)) {
+			for (int sli = 0; sli != second_level_index_count; ++sli) {
+				if (allocator->second_level_bitmaps[fli] & (1U << sli)) {
+					if (allocator->segregated_lists[fli][sli]->prev_physical_block == 0) {
+						return 0;
+					}
+				}
+			}
+		}
+	}
+	return 1;
+}
+
+//Search the segregated list of free blocks for a given block
+tloc_bool tloc_BlockExistsInSegregatedList(tloc_allocator *allocator, tloc_header* block) {
+	tloc_index scan_result;
+	scan_result = tloc__scan_reverse(allocator->total_memory);
+	tloc_index first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
+	tloc_index second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
+	for (int fli = 0; fli != first_level_index_count; ++fli) {
+		for (int sli = 0; sli != second_level_index_count; ++sli) {
+			tloc_header *current = allocator->segregated_lists[fli][sli];
+			while (current != tloc__end(allocator)) {
+				if (current == block) {
+					return 1;
+				}
+				current = current->next_free_block;
+			}
+		}
+	}
+	return 0;
+}
+
+//Loops through all blocks in the allocator and confirms that they all correctly link together
+tloc__error_codes tloc_VerifyBlocks(tloc_allocator *allocator, tloc__block_output output_function, void *user_data) {
+	tloc_header *current_block = allocator->first_block;
+	if (!tloc_ValidPointer(allocator, (void*)current_block)) {
+		return tloc__INVALID_FIRST_BLOCK;
+	}
+	while (!tloc__is_last_block(allocator, current_block)) {
+		if (!tloc_ValidBlock(allocator, current_block)) {
+			return current_block == allocator->first_block ? tloc__INVALID_FIRST_BLOCK : tloc__INVALID_BLOCK_FOUND;
+		}
+		if (output_function) {
+			tloc__output(current_block, tloc__block_size(current_block), tloc__is_free_block(current_block), user_data, 0);
+		}
+		tloc_header *prev_block = current_block->prev_physical_block;
+		if (prev_block != tloc__end(allocator)) {
+			ptrdiff_t diff = (char*)current_block - (char*)prev_block;
+			tloc_size expected_diff = tloc__block_size(prev_block) + tloc__BLOCK_POINTER_OFFSET;
+			if (diff != tloc__block_size(prev_block) + tloc__BLOCK_POINTER_OFFSET) {
+				return tloc__PHYSICAL_BLOCK_MISALIGNMENT;
+			}
+		}
+		tloc_header *last_block = current_block;
+		current_block = tloc__next_physical_block(current_block);
+		if (last_block != current_block->prev_physical_block) {
+			return tloc__PHYSICAL_BLOCK_MISALIGNMENT;
+		}
+		if (!tloc_ConfirmBlockLink(allocator, current_block)) {
+			return tloc__PHYSICAL_BLOCK_MISALIGNMENT;
+		}
+	}
+	if (output_function) {
+		tloc__output(current_block, tloc__block_size(current_block), tloc__is_free_block(current_block), user_data, 1);
+	}
+	return tloc__OK;
+}
+
+tloc_header *tloc_SearchList(tloc_allocator *allocator, tloc_header *search) {
+	tloc_header *current_block = allocator->first_block;
+	if (search == current_block) {
+		return current_block;
+	}
+	if (!tloc_ValidPointer(allocator, (void*)current_block)) {
+		return 0;
+	}
+	while (!tloc__is_last_block(allocator, current_block)) {
+		if (search == current_block) {
+			return current_block;
+		}
+		current_block = tloc__next_physical_block(current_block);
+	}
+	return current_block == search ? current_block : 0;
 }
 
 //Test helper function calculates the correct size
@@ -46,6 +167,7 @@ int TestFreeingAnInvalidAllocation() {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, tloc__MEGABYTE(1));
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (allocator) {
 		void *allocation = malloc(tloc__KILOBYTE(1));
 		if (!tloc_Free(allocator, allocation)) {
@@ -62,6 +184,7 @@ int TestMemoryCorruptionDetection() {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, tloc__MEGABYTE(1));
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (allocator) {
 		int *allocation = tloc_Allocate(allocator, sizeof(int) * 10);
 		for (int i = 0; i != 20; ++i) {
@@ -80,6 +203,7 @@ int TestMemoryCorruptionDetection2() {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, tloc__MEGABYTE(1));
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (allocator) {
 		int *allocation = tloc_Allocate(allocator, sizeof(int) * 10);
 		for (int i = -5; i != 10; ++i) {
@@ -125,6 +249,7 @@ int TestAllocateMultiOverAllocate() {
 	int result = 1;
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 	}
@@ -150,6 +275,7 @@ int TestAllocateFreeSameSizeBlocks() {
 	int result = 1;
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 	}
@@ -192,6 +318,7 @@ int TestAllocationTooSmall() {
 	int result = 1;
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 	}
@@ -225,6 +352,7 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, pool_size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 		tloc_free_memory(memory);
@@ -259,6 +387,7 @@ int TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(tloc_uint iterati
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, pool_size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 		tloc_free_memory(memory);
@@ -304,6 +433,7 @@ int TestAllocatingUntilOutOfSpaceThenFreeAll(tloc_uint iterations, tloc_size poo
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, pool_size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 		tloc_free_memory(memory);
@@ -341,6 +471,7 @@ int TestManyAllocationsAndFreesWithReset(tloc_uint iterations, tloc_size pool_si
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, pool_size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 		tloc_free_memory(memory);
@@ -397,6 +528,7 @@ int TestAllocation64bit() {
 	int result = 1;
 	void* memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
 	}
