@@ -18,12 +18,21 @@
     <ClInclude Include="header.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="pthread.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sched.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="2loc.h">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="tests.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="validators.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

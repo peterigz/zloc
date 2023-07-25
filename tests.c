@@ -1,11 +1,20 @@
-#define TLOC_ERROR_COLOR "\033[90m"
-#define TLOC_IMPLEMENTATION
-//#define TLOC_OUTPUT_ERROR_MESSAGES
 #include <stdio.h>
 
 #if !defined(TLOC_DEV_MODE)
-
+#define TLOC_ERROR_COLOR "\033[90m"
+#define TLOC_IMPLEMENTATION
+#define TLOC_OUTPUT_ERROR_MESSAGES
+#define TLOC_THREAD_SAFE
 #include "2loc.h"
+#define _TIMESPEC_DEFINED
+#include "pthread.h"
+#ifdef _WIN32
+#include <windows.h>
+#define tloc_sleep(seconds) Sleep(seconds)
+#else
+#include <unistd.h>
+#define tloc_sleep(seconds) sleep(seconds)
+#endif
 
 #define tloc_free_memory(memory) if(memory) free(memory);
 
@@ -14,6 +23,14 @@ void PrintTestResult(const char *message, int result) {
 	printf("%s [%s]\033[0m\n", result == 0 ? "\033[31m" : "\033[32m", result == 0 ? "FAILED" : "PASSED");
 }
 
+static void tloc__output(void* ptr, size_t size, int free, void* user, int is_final_output)
+{
+	(void)user;
+	printf("\t%p %s size: %zi (%p)\n", ptr, free ? "free" : "used", size, ptr);
+	if (is_final_output) {
+		printf("\t------------- * ---------------\n");
+	}
+}
 //Some helper functions for debugging
 //Makes sure that all blocks in the segregated list of free blocks are all valid
 tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
@@ -88,6 +105,9 @@ tloc__error_codes tloc_VerifyBlocks(tloc_allocator *allocator, tloc__block_outpu
 	if (!tloc_ValidPointer(allocator, (void*)current_block)) {
 		return tloc__INVALID_FIRST_BLOCK;
 	}
+	if (tloc__is_locked_block(current_block)) {
+		return tloc__BLOCK_IS_LOCKED_BUT_SHOULD_NOT_BE;
+	}
 	while (!tloc__is_last_block(allocator, current_block)) {
 		if (!tloc_ValidBlock(allocator, current_block)) {
 			return current_block == allocator->first_block ? tloc__INVALID_FIRST_BLOCK : tloc__INVALID_BLOCK_FOUND;
@@ -110,6 +130,9 @@ tloc__error_codes tloc_VerifyBlocks(tloc_allocator *allocator, tloc__block_outpu
 		}
 		if (!tloc_ConfirmBlockLink(allocator, current_block)) {
 			return tloc__PHYSICAL_BLOCK_MISALIGNMENT;
+		}
+		if (tloc__is_locked_block(current_block)) {
+			return tloc__BLOCK_IS_LOCKED_BUT_SHOULD_NOT_BE;
 		}
 	}
 	if (output_function) {
@@ -290,17 +313,22 @@ int TestAllocateFreeSameSizeBlocks() {
 	//Free every second one so that blocks don't get merged
 	for (int i = 0; i != 20; i += 2) {
 		tloc_Free(allocator, allocations[i]);
+		tloc__error_codes error = tloc_VerifyBlocks(allocator, 0, 0);
+		assert(error == tloc__OK);
 		allocations[i] = 0;
 	}
 	for (int i = 0; i != 40; ++i) {
 		allocations[i] = tloc_Allocate(allocator, 1024);
+		tloc__error_codes error = tloc_VerifyBlocks(allocator, 0, 0);
+		assert(error == tloc__OK);
 		if (!allocations[i]) {
 			result = 0;
 		}
 	}
 	for (int i = 0; i != 40; ++i) {
 		if (allocations[i]) {
-			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
+			tloc__error_codes error = tloc_VerifyBlocks(allocator, 0, 0);
+			assert(error == tloc__OK);
 			if (i == 11) {
 				int d = 0;
 			}
@@ -362,6 +390,9 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 		memset(allocations, 0, sizeof(void*) * 100);
 		for (int i = 0; i != iterations; ++i) {
 			int index = rand() % 100;
+			if (i == 7) {
+				int d = 0;
+			}
 			if (allocations[index]) {
 				tloc_Free(allocator, allocations[index]);
 				allocations[index] = 0;
@@ -542,7 +573,76 @@ int TestAllocation64bit() {
 }
 #endif
 
+typedef struct tloc_thread_test {
+	tloc_allocator *allocator;
+	void *allocations[100];
+	tloc_uint iterations;
+	tloc_size pool_size;
+	tloc_size min_allocation_size;
+	tloc_size max_allocation_size;
+} tloc_thread_test;
+
+// Function that will be executed by the thread
+void *AllocationWorker(void *arg) {
+	tloc_thread_test *thread_test = (tloc_thread_test*)arg;
+	for (int i = 0; i != thread_test->iterations; ++i) {
+		int index = rand() % 100;
+		if (i == 7) {
+			int d = 0;
+		}
+		if (thread_test->allocations[index]) {
+			tloc_Free(thread_test->allocator, thread_test->allocations[index]);
+			thread_test->allocations[index] = 0;
+		}
+		else {
+			tloc_size allocation_size = (rand() % thread_test->max_allocation_size) + thread_test->min_allocation_size;
+			thread_test->allocations[index] = tloc_Allocate(thread_test->allocator, allocation_size);
+			if (thread_test->allocations[index]) {
+				//Do a memset set to test if we're overwriting block headers
+				memset(thread_test->allocations[index], 7, allocation_size);
+			}
+		}
+	}
+	return 0;
+}
+
+int TestMultithreading(tloc_uint iterations, tloc_size pool_size, tloc_size min_allocation_size, tloc_size max_allocation_size) {
+	int result = 1;
+	void* memory = malloc(pool_size);
+	tloc_thread_test thread_test;
+
+	thread_test.allocator = tloc_InitialiseAllocator(memory, pool_size);
+	memset(thread_test.allocations, 0, sizeof(void*) * 100);
+	thread_test.max_allocation_size = max_allocation_size;
+	thread_test.min_allocation_size = min_allocation_size;
+	thread_test.iterations = iterations;
+	thread_test.pool_size = pool_size;
+
+	pthread_t allocator_thread_id_1;
+	pthread_t allocator_thread_id_2;
+
+	if (pthread_create(&allocator_thread_id_1, NULL, AllocationWorker, (void *)&thread_test) != 0) {
+		return 0;
+	}
+
+	if (pthread_create(&allocator_thread_id_2, NULL, AllocationWorker, (void *)&thread_test) != 0) {
+		//return 0;
+	}
+
+	if (pthread_join(allocator_thread_id_1, NULL) != 0) {
+		result = 0;
+	}
+	if (pthread_join(allocator_thread_id_2, NULL) != 0) {
+		//result = 0;
+	}
+
+	return 1;
+}
+
 int main() {
+
+	PrintTestResult("Test: Multithreading test, 2 workers, 10000 iterations of allocating and freeing 16b 256kb in a 128MB pool", TestMultithreading(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256)));
+	return 0;
 	PrintTestResult("Test: Helper function calculate allocation size 1MB and compare with actual allocated size", TestSizeHelperFunction(tloc__MEGABYTE(1)));
 	PrintTestResult("Test: Helper function calculate allocation size 128MB and compare with actual allocated size", TestSizeHelperFunction(tloc__MEGABYTE(128)));
 	PrintTestResult("Test: Helper function calculate allocation size 1GB and compare with actual allocated size", TestSizeHelperFunction(tloc__GIGABYTE(1)));
@@ -570,6 +670,7 @@ int main() {
 #if defined(tloc__64BIT)
 	//PrintTestResult("Test: Create a large (>4gb) memory pool, and allocate half of it", TestAllocation64bit());
 #endif
+	return 0;
 }
 
 #endif
