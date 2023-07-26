@@ -94,7 +94,7 @@
 typedef int tloc_index;
 typedef unsigned int tloc_sl_bitmap;
 typedef unsigned int tloc_uint;
-typedef unsigned int tloc_thread_op;
+typedef unsigned int tloc_thread_access;
 typedef int tloc_bool;
 
 #if (defined(_MSC_VER) && defined(_M_X64)) || defined(__x86_64__)
@@ -199,9 +199,8 @@ typedef struct tloc_allocator {
 	void *end_of_pool;
 	size_t total_memory;
 #if defined(TLOC_THREAD_SAFE)
-	/* Multithreading */
-	tloc_sl_bitmap *second_level_bitmap_locks;
-	volatile tloc_thread_op free_in_progress;
+	/* Multithreading protection*/
+	volatile tloc_thread_access access;
 #endif
 	/*	Here we store all of the free block data. first_level_bitmap is either a 32bit int
 	or 64bit depending on the mode you're in. second_level_bitmaps are an array of 32bit
@@ -239,27 +238,9 @@ static inline int tloc__scan_forward(tloc_size bitmap)
 
 #ifdef _WIN32
 #include <Windows.h>
-static inline tloc_size tloc__compare_and_exchange_bitmap(volatile tloc_sl_bitmap* target, tloc_sl_bitmap value, tloc_sl_bitmap original) {
+static inline tloc_thread_access tloc__compare_and_exchange(volatile tloc_thread_access* target, tloc_thread_access value, tloc_thread_access original) {
 	return InterlockedCompareExchange(target, value, original);
 }
-static inline tloc_size tloc__exchange_bitmap(volatile tloc_sl_bitmap* target, tloc_sl_bitmap value) {
-	return InterlockedExchange(target, value);
-}
-#if defined(tloc__64BIT)
-static inline tloc_size tloc__compare_and_exchange(volatile tloc_size* target, tloc_size value, tloc_size original) {
-	return InterlockedCompareExchange64(target, value, original);
-}
-static inline tloc_size tloc__exchange(volatile tloc_size* target, tloc_size value) {
-	return InterlockedExchange64(target, value);
-}
-#else
-static inline tloc_size tloc__compare_and_exchange(volatile tloc_size* target, tloc_size value, tloc_size original) {
-	return InterlockedCompareExchange(target, value, orginal);
-}
-static inline tloc_size tloc__exchange(volatile tloc_size* target, tloc_size value) {
-	return InterlockedExchange(target, value);
-}
-#endif
 #endif
 
 #elif defined(__GNUC__) && ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 8)) && \
@@ -284,12 +265,6 @@ static inline int tloc__scan_forward(tloc_size bitmap)
 #endif
 }
 
-#endif
-
-#if defined(TLOC_THREAD_SAFE)
-#define tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli) tloc__exchange_bitmap(&allocator->second_level_bitmap_locks[fli], allocator->second_level_bitmap_locks[fli] & ~(1 << sli))
-#else
-#define tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli)
 #endif
 
 /*
@@ -492,89 +467,20 @@ static inline tloc_index tloc__find_next_size_up(tloc_fl_bitmap map, tloc_uint s
 //Write functions
 #if defined(TLOC_THREAD_SAFE)
 
-#define TLOC_HANDLE_POP_BLOCK_RETURN() block = tloc__lock_block(tloc__pop_block(allocator, fli, sli)); if(!block) {continue;} else {tloc__unlock_block(block); return tloc__block_user_ptr(block);}
-#define TLOC_HANDLE_POP_BLOCK() block = tloc__lock_block(tloc__pop_block(allocator, fli, sli)); if(!block) {continue;}
-
-static inline void tloc__wait_until_sli_is_free_and_lock(tloc_allocator *allocator, tloc_fl_bitmap fli, tloc_sl_bitmap sli) {
-	for (;;) {
-		tloc_sl_bitmap original_bitmap_locks = allocator->second_level_bitmap_locks[fli];
-		if (!(original_bitmap_locks & (1ULL << fli))) {
-			//If not locked then try and lock it
-			tloc_sl_bitmap new_bitmap_locks = allocator->second_level_bitmap_locks[fli] & 1ULL << fli;
-			tloc_fl_bitmap bitmap = tloc__compare_and_exchange_bitmap(&allocator->second_level_bitmap_locks[fli], new_bitmap_locks, original_bitmap_locks);
-			if (bitmap == original_bitmap_locks) {
-				//We've locked down this size class, break out of the spin
-				break;
-			}
-		}
-	}
+static inline void tloc__lock_thread_access(tloc_allocator *allocator) {
+	do {
+	} while (0 != tloc__compare_and_exchange(&allocator->access, 1, 0));
 }
 
-static inline tloc_header* tloc__lock_block(tloc_allocator *allocator, tloc_header *block) {
-	tloc_size original_block_size = block->size;
-	if (!(original_block_size & tloc__BLOCK_IS_LOCKED)) {
-		//If not locked then try and lock it
-		tloc_size new_block_size = block->size | tloc__BLOCK_IS_LOCKED;
-		tloc_size block_size = tloc__compare_and_exchange(&block->size, new_block_size, original_block_size);
-		if (block_size == original_block_size) {
-			//We've locked it but is it a valid block?
-			if (!tloc__valid_block(block)) {
-				return allocator->end_block;
-			}
-			return block;
-		}
-	}
-	//Failed to lock the block
-	return 0;
+static inline void tloc__unlock_thread_access(tloc_allocator *allocator) {
+	allocator->access = 0;
 }
 
-static inline void tloc__claim_block(tloc_header *block) {
-	for (;;) {
-		tloc_size original_block_size = block->size;
-		if (!(original_block_size & tloc__BLOCK_IS_LOCKED)) {
-			//If not locked then try and lock it
-			tloc_size new_block_size = block->size | tloc__BLOCK_IS_LOCKED;
-			tloc_size block_size = tloc__compare_and_exchange(&block->size, new_block_size, original_block_size);
-			if (block_size == original_block_size) {
-				//We've locked it, break out and stop spinning
-				break;
-			}
-		}
-	}
-	//Successfully locked the blocks
-}
-
-static inline void tloc__unlock_block(tloc_header *block) {
-	assert(block->size & tloc__BLOCK_IS_LOCKED);
-	block->size &= ~tloc__BLOCK_IS_LOCKED;
-}
-
-static inline void tloc__set_thread_op(tloc_allocator *allocator) {
-	tloc_thread_op original_thread_op = allocator->free_in_progress;
-	if (!(original_thread_op == 1)) {
-		tloc_thread_op new_thread_op = 1;
-		tloc_thread_op current_thread_op = tloc__compare_and_exchange(&block->free_in_progress, new_thread_op, original_thread_op);
-		if (current_thread_op == original_thread_op) {
-			return 1;
-		}
-	}
-	//Failed to lock the block
-	return 0;
-}
-
-#else
-#define TLOC_HANDLE_POP_BLOCK_RETURN() tloc_header *block = tloc__pop_block(allocator, fli, sli); return tloc__block_user_ptr(block);
-#define TLOC_HANDLE_POP_BLOCK() tloc_header *block = tloc__pop_block(allocator, fli, sli); 
 #endif
 
 static inline void tloc__set_block_size(tloc_header *block, tloc_size size) {
-#if defined(TLOC_THREAD_SAFE)
-	tloc_size boundary_tag = block->size & (tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE | tloc__BLOCK_IS_LOCKED);
-	block->size = size | boundary_tag;
-#else
 	tloc_size boundary_tag = block->size & (tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);
 	block->size = size | boundary_tag;
-#endif
 }
 
 static inline void tloc__set_prev_physical_block(tloc_header *block, tloc_header *prev_block) {
@@ -611,18 +517,7 @@ static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *bloc
 	tloc_index sli;
 	//Get the size class of the block
 	tloc__map(tloc__block_size(block), &fli, &sli);
-#if defined(TLOC_THREAD_SAFE)
-	//Lock the next fli
-	tloc__wait_until_sli_is_free_and_lock(allocator, fli, sli);
-	tloc_header *current_block_in_free_list = 0; 
-	while (!current_block_in_free_list) {
-		current_block_in_free_list = tloc__lock_block(allocator->segregated_lists[fli][sli]);
-		if (!current_block_in_free_list) continue;
-		break;
-	}
-#else
 	tloc_header *current_block_in_free_list = allocator->segregated_lists[fli][sli];
-#endif
 	//Insert the block into the list by updating the next and prev free blocks of
 	//this and the current block in the free list. The current block in the free
 	//list may well be the end_block in the allocator so this just means that this
@@ -630,16 +525,12 @@ static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *bloc
 	block->next_free_block = current_block_in_free_list;
 	block->prev_free_block = &allocator->end_block;
 	current_block_in_free_list->prev_free_block = block;
-#if defined(TLOC_THREAD_SAFE)
-	tloc__unlock_block(current_block_in_free_list);
-#endif
 
 	allocator->segregated_lists[fli][sli] = block;
 	//Flag the bitmaps to mark that this size class now contains a free block
 	allocator->first_level_bitmap |= 1ULL << fli;
 	allocator->second_level_bitmaps[fli] |= 1 << sli;
 	tloc__mark_block_as_free(allocator, block);
-	tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
 }
 
 /*
@@ -680,11 +571,6 @@ static inline void tloc__remove_block_from_segregated_list(tloc_allocator *alloc
 	tloc_index fli, sli;
 	//Get the size class
 	tloc__map(tloc__block_size(block), &fli, &sli);
-#if defined(TLOC_THREAD_SAFE)
-	//Is this sli currently locked by another thread?
-	//Do an atomic compare here and wait until the sli is free
-	tloc__wait_until_sli_is_free_and_lock(allocator, fli, sli);
-#endif
 	tloc_header *prev_block = block->prev_free_block;
 	tloc_header *next_block = block->next_free_block;
 	assert(prev_block);
@@ -701,7 +587,6 @@ static inline void tloc__remove_block_from_segregated_list(tloc_allocator *alloc
 		}
 	}
 	tloc__mark_block_as_used(allocator, block);
-	tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
 }
 
 /*
@@ -711,11 +596,6 @@ static inline void tloc__remove_block_from_segregated_list(tloc_allocator *alloc
 	If split then the trimmed amount is added back to the segregated list of free blocks.
 */
 static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_header *block, tloc_size size) {
-#if defined(TLOC_THREAD_SAFE)
-	if (!tloc__is_last_block(allocator, block)) {
-		tloc__wait_until_block_free_and_lock(tloc__next_physical_block(block));
-	}
-#endif
 	tloc_size size_plus_overhead = size + tloc__BLOCK_POINTER_OFFSET;
 	if (size_plus_overhead + tloc__MINIMUM_BLOCK_SIZE > tloc__block_size(block)) {
 		return (void*)((char*)block + tloc__BLOCK_POINTER_OFFSET);
@@ -723,9 +603,6 @@ static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_head
 	tloc_header *trimmed = (tloc_header*)((char*)tloc__block_user_ptr(block) + size);
 	trimmed->size = 0;
 	tloc__set_block_size(trimmed, tloc__block_size(block) - size_plus_overhead);
-#if defined(TLOC_THREAD_SAFE)
-	trimmed->size |= tloc__BLOCK_IS_LOCKED;
-#endif
 	if (!tloc__is_last_block(allocator, block)) {
 		tloc_header *next_block = tloc__next_physical_block(block);
 		tloc__set_prev_physical_block(next_block, trimmed);
@@ -745,21 +622,10 @@ static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_head
 static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator, tloc_header *block) {
 	tloc_header *prev_block = block->prev_physical_block;
 	tloc_size offset_size = tloc__BLOCK_POINTER_OFFSET + tloc__block_size(prev_block) + tloc__block_size(block);
-#ifndef TLOC_THREAD_SAFE
-	tloc_header *next_block = 0;
-	while (!next_block) {
-		tloc_header *next_block = tloc__lock_block(tloc__next_physical_block(block));
-		if (!next_block) continue;
-	}
-#else
-	tloc_header *next_block = tloc__lock_block(tloc__next_physical_block(block));
-#endif
+	tloc_header *next_block = tloc__next_physical_block(block);
 	tloc__remove_block_from_segregated_list(allocator, prev_block);
 	tloc__set_block_size(prev_block, tloc__block_size(prev_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
 	tloc__set_prev_physical_block(next_block, prev_block);
-#ifndef TLOC_THREAD_SAFE
-	tloc__unlock_block(next_block);
-#endif
 	tloc__zero_block(block);
 	return prev_block;
 }
@@ -768,42 +634,17 @@ static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator
 	This function might be called when tloc_Free is called to free a block. If the block being freed is not the last 
 	physical block then this function is called and if the next block is free then it will be merged.
 */
-static inline tloc_bool tloc__merge_with_next_block_if_free(tloc_allocator *allocator, tloc_header *block) {
-#ifndef TLOC_THREAD_SAFE
-	tloc_header *next_block = 0;
-	while (!next_block) {
-		next_block = tloc__lock_block(tloc__next_physical_block(block));
-		if (!next_block) continue;
-		break;
-	}
-#else
-	tloc_header* next_block = tloc__next_physical_block(block);
-#endif
+static inline void tloc__merge_with_next_block_if_free(tloc_allocator *allocator, tloc_header *block) {
+	tloc_header *next_block = tloc__next_physical_block(block);
 	if (next_block->prev_physical_block == block && tloc__is_free_block(next_block)) {
 		tloc__remove_block_from_segregated_list(allocator, next_block);
 		tloc__set_block_size(block, tloc__block_size(next_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
 		if (!tloc__is_last_block(allocator, next_block)) {
-#ifndef TLOC_THREAD_SAFE
-			tloc_header *block_after_next;
-			while (!block_after_next) {
-				next_block = tloc__lock_block(tloc__next_physical_block(next_block));
-				if (!next_block) continue;
-				break;
-			}
-			tloc__set_prev_physical_block(block_after_next, block);
-			tloc__unlock_block(block_after_next);
-#else
 			tloc_header *block_after_next = tloc__next_physical_block(next_block);
 			tloc__set_prev_physical_block(block_after_next, block);
-#endif
 		}
 		tloc__zero_block(next_block);
-		return 1;
 	}
-#ifndef TLOC_THREAD_SAFE
-	tloc__unlock_block(next_block);
-#endif
-	return 0;
 }
 //--End of internal functions
 
@@ -854,15 +695,10 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	//There are first_level_index_counts of second_level_bitmaps as each first level set of size classes has it's own
 	//set of finer size classes within that size.
 	tloc_uint size_of_second_level_bitmap_list = first_level_index_count * sizeof(tloc_index);
-#if defined(TLOC_THREAD_SAFE)
-	tloc_uint size_of_second_level_bitmap_locks_list = first_level_index_count * sizeof(tloc_index);
-#else
-	tloc_uint size_of_second_level_bitmap_locks_list = 0;
-#endif
 	tloc_uint size_of_each_second_level_list = second_level_index_count * tloc__POINTER_SIZE;
 	tloc_uint size_of_first_level_list = first_level_index_count * tloc__POINTER_SIZE;
 	tloc_uint segregated_list_size = (second_level_index_count * tloc__POINTER_SIZE * first_level_index_count) + (first_level_index_count * tloc__POINTER_SIZE);
-	tloc_uint lists_size = segregated_list_size + size_of_second_level_bitmap_list + size_of_second_level_bitmap_locks_list;
+	tloc_uint lists_size = segregated_list_size + size_of_second_level_bitmap_list;
 	size_t minimum_size = lists_size + tloc__MINIMUM_BLOCK_SIZE + array_offset + tloc__BLOCK_POINTER_OFFSET;
 	if (size < minimum_size) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to initialise allocator with a memory pool that is too small. Must be at least: %zi bytes\n", TLOC_ERROR_NAME, minimum_size);
@@ -873,16 +709,12 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	allocator->total_memory = size;
 	allocator->first_block = (tloc_header*)((char*)memory + array_offset + lists_size);
 	allocator->second_level_bitmaps = (tloc_sl_bitmap*)(((char*)memory) + array_offset);
-#if defined(TLOC_THREAD_SAFE)
-	allocator->second_level_bitmap_locks = (tloc_sl_bitmap*)(((char*)memory) + array_offset + size_of_second_level_bitmap_list);
-	memset(allocator->second_level_bitmap_locks, 0, size_of_second_level_bitmap_locks_list);
-#endif
 	memset(allocator->second_level_bitmaps, 0, size_of_second_level_bitmap_list);
 	assert(tloc_VerifySecondLevelBitmapsAreInitialised(allocator) == tloc__OK);
 	//Point all of the segregated list array pointers to the empty block
-	allocator->segregated_lists = (tloc_header***)(((char*)memory) + array_offset + size_of_second_level_bitmap_list + size_of_second_level_bitmap_locks_list);
+	allocator->segregated_lists = (tloc_header***)(((char*)memory) + array_offset + size_of_second_level_bitmap_list);
 	for (tloc_uint i = 0; i < first_level_index_count; i++) {
-		tloc_header **ptr = (tloc_header**)((char*)memory + (array_offset + size_of_second_level_bitmap_list + size_of_first_level_list + size_of_second_level_bitmap_locks_list) + (i * size_of_each_second_level_list));
+		tloc_header **ptr = (tloc_header**)((char*)memory + (array_offset + size_of_second_level_bitmap_list + size_of_first_level_list) + (i * size_of_each_second_level_list));
 		allocator->segregated_lists[i] = ptr;
 		for (tloc_uint j = 0; j < second_level_index_count; j++) {
 			allocator->segregated_lists[i][j] = &allocator->end_block;
@@ -921,9 +753,6 @@ tloc_size tloc_CalculateAllocationSize(tloc_size size) {
 	tloc_uint size_of_second_level_bitmap_list = first_level_index_count * sizeof(tloc_index);
 	tloc_uint segregated_list_size = (second_level_index_count * tloc__POINTER_SIZE * first_level_index_count) + (first_level_index_count * tloc__POINTER_SIZE);
 	tloc_size lists_size = segregated_list_size + size_of_second_level_bitmap_list;
-#if defined(TLOC_THREAD_SAFE)
-	lists_size += size_of_second_level_bitmap_list;
-#endif
 
 	return tloc__align_size_up(array_offset + lists_size + size, tloc__MEMORY_ALIGNMENT);
 }
@@ -940,6 +769,10 @@ tloc_size tloc_AllocatorPoolSize(tloc_allocator *allocator) {
 }
 
 void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
+#if defined(TLOC_THREAD_SAFE)
+	tloc__lock_thread_access(allocator);
+	assert(allocator->access != 0);
+#endif
 	tloc_index fli;
 	tloc_index sli;
 	size = tloc__align_size_up(size, tloc__MEMORY_ALIGNMENT);
@@ -948,126 +781,72 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 		return NULL;
 	}
 	tloc__map(size, &fli, &sli);
-	tloc_header *block = 0;
-
+	//Note that there may well be an appropriate size block in the class but that block may not be at the head of the list
+	//In this situation we could opt to loop through the list of the size class to see if there is an appropriate size but instead
+	//we stick to the paper and just move on to the next class up to keep a O1 speed at the cost of some extra fragmentation
+	if (tloc__has_free_block(allocator, fli, sli) && tloc__block_size(allocator->segregated_lists[fli][sli]) >= size) {
+		void *user_ptr = tloc__block_user_ptr(tloc__pop_block(allocator, fli, sli));
 #if defined(TLOC_THREAD_SAFE)
-	//Is this fli currently locked by another thread?
-	//Do an atomic compare here and wait until the fli is free
-	while (!block) {
-		tloc__wait_until_sli_is_free_and_lock(allocator, fli, sli);
-		if (tloc__has_free_block(allocator, fli, sli)) {
-			block = tloc__lock_block(allocator->segregated_lists[fli][sli]);
-			if (!block) { 
-				tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
-				continue; 
-			}
-			if (tloc__block_size(block) >= size) {
-				tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
-				TLOC_HANDLE_POP_BLOCK_RETURN()
-			}
-		}
-#else
-		block = allocator->segregated_lists[fli][sli];
-		if (tloc__has_free_block(allocator, fli, sli) && tloc__block_size(block) >= size) {
-			tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
-			TLOC_HANDLE_POP_BLOCK_RETURN()
-		}
+		tloc__unlock_thread_access(allocator);
 #endif
-		//Note that there may well be an appropriate size block in the size class but that block may not be at the head of the list
-		//In this situation we could opt to loop through the list of the size class to see if there is an appropriate size but instead
-		//we stick to the paper and just move on to the next class up to keep a O1 speed at the cost of some extra fragmentation
-		if (sli == (1 << tloc__SECOND_LEVEL_INDEX_LOG2) - 1) {
-			tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
-			sli = -1;
-		}
-		else {
-			tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
-			sli = tloc__find_next_size_up(allocator->second_level_bitmaps[fli], sli);
-		}
-		if (sli == -1) {
-			fli = tloc__find_next_size_up(allocator->first_level_bitmap, fli);
-			if (fli > -1) {
-				sli = tloc__scan_forward(allocator->second_level_bitmaps[fli]);
-#if defined(TLOC_THREAD_SAFE)
-				//Lock the next fli
-				tloc__wait_until_sli_is_free_and_lock(allocator, fli, sli);
-#endif
-				TLOC_HANDLE_POP_BLOCK()
-				assert(tloc_ConfirmBlockLink(allocator, block));
-				assert(tloc__block_size(block) > size);
-				void *allocation = tloc__maybe_split_block(allocator, block, size);
-				tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
-				return allocation;
-			}
-		}
-		else {
-			TLOC_HANDLE_POP_BLOCK()
+		return user_ptr;
+	}
+	if (sli == (1 << tloc__SECOND_LEVEL_INDEX_LOG2) - 1) {
+		sli = -1;
+	}
+	else {
+		sli = tloc__find_next_size_up(allocator->second_level_bitmaps[fli], sli);
+	}
+	if (sli == -1) {
+		fli = tloc__find_next_size_up(allocator->first_level_bitmap, fli);
+		if (fli > -1) {
+			sli = tloc__scan_forward(allocator->second_level_bitmaps[fli]);
+			tloc_header *block = tloc__pop_block(allocator, fli, sli);
 			assert(tloc_ConfirmBlockLink(allocator, block));
 			assert(tloc__block_size(block) > size);
 			void *allocation = tloc__maybe_split_block(allocator, block, size);
-			tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
+#if defined(TLOC_THREAD_SAFE)
+			tloc__unlock_thread_access(allocator);
+#endif
 			return allocation;
 		}
-		break;
-#if defined(TLOC_THREAD_SAFE)
 	}
+	else {
+		tloc_header *block = tloc__pop_block(allocator, fli, sli);
+		assert(tloc_ConfirmBlockLink(allocator, block));
+		assert(tloc__block_size(block) > size);
+		void *allocation = tloc__maybe_split_block(allocator, block, size);
+#if defined(TLOC_THREAD_SAFE)
+		tloc__unlock_thread_access(allocator);
 #endif
+		return allocation;
+	}
 	//Out of memory;
 	TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Not enough memory in pool to allocate %zu bytes\n", TLOC_ERROR_NAME, size);
-	tloc__UNLOCK_SECOND_LEVEL_INDEX(fli, sli);
-	return NULL;
+#if defined(TLOC_THREAD_SAFE)
+	tloc__unlock_thread_access(allocator);
+#endif
+	return 0;
 }
 
 int tloc_Free(tloc_allocator *allocator, void* allocation) {
 #if defined(TLOC_THREAD_SAFE)
-	tloc_header *block = 0;
-	while (!block) {
-		block = tloc__lock_block(tloc__block_from_allocation(allocation));
-		if (block == 0) continue;
-		if (!tloc__is_used_block(block)) {
-			TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to free an allocation that was already free. Make sure that another thread has not freed this block already.\n", TLOC_ERROR_NAME);
-			tloc__unlock_block(block);
-			return 0;
-		}
-		if (!tloc__valid_allocation_pointer(allocator, block)) {
-			TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to free an invalid allocation. Pointer doesn't point to a valid block in the allocator or potentially writes were made outside of the allocation bounds.\n", TLOC_ERROR_NAME);
-			tloc__unlock_block(block);
-			return 0;
-		}
-		if (!tloc__valid_block(allocator, block)) {
-			TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Memory corruption detected. Block you are trying to free no longer links with other blocks correctly suggesting that writes were made outside of the allocation bounds.\n", TLOC_ERROR_NAME);
-			tloc__unlock_block(block);
-			return 0;
-		}
-		tloc_header *prev_block = 0;
-		while (!prev_block) {
-			prev_block = tloc__lock_block(block->prev_physical_block);
-			if (prev_block == 0) continue;
-			if (tloc__prev_is_free_block(block)) {
-				assert(block->prev_physical_block);		//Must be a valid previous physical block
-				block = tloc__merge_with_prev_block(allocator, block);
-			}
-			else {
-				tloc__unlock_block(prev_block);
-			}
-			break;
-		}
-		if (!tloc__is_last_block(allocator, block)) {
-			tloc__merge_with_next_block_if_free(allocator, block);
-		}
-		tloc__push_block(allocator, block);
-		tloc__unlock_block(block);
-		break;
-	}
-	return 1;
-#else
+	tloc__lock_thread_access(allocator);
+	assert(allocator->access != 0);
+#endif
 	tloc_header *block = tloc__block_from_allocation(allocation);
 	if (!tloc__valid_allocation_pointer(allocator, block)) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to free an invalid allocation. Pointer doesn't point to a valid block in the allocator or potentially writes were made outside of the allocation bounds.\n", TLOC_ERROR_NAME);
+#if defined(TLOC_THREAD_SAFE)
+		tloc__unlock_thread_access(allocator);
+#endif
 		return 0;
 	}
 	if (!tloc__valid_block(allocator, block)) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Memory corruption detected. Block you are trying to free no longer links with other blocks correctly suggesting that writes were made outside of the allocation bounds.\n", TLOC_ERROR_NAME);
+#if defined(TLOC_THREAD_SAFE)
+		tloc__unlock_thread_access(allocator);
+#endif
 		return 0;
 	}
 	if (tloc__prev_is_free_block(block)) {
@@ -1078,8 +857,10 @@ int tloc_Free(tloc_allocator *allocator, void* allocation) {
 		tloc__merge_with_next_block_if_free(allocator, block);
 	}
 	tloc__push_block(allocator, block);
-	return 1;
+#if defined(TLOC_THREAD_SAFE)
+	tloc__unlock_thread_access(allocator);
 #endif
+	return 1;
 }
 
 int tloc_BlockCount(tloc_allocator *allocator) {
