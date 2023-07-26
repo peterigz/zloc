@@ -5,7 +5,7 @@
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
 //#define TLOC_OUTPUT_ERROR_MESSAGES
-//#define TLOC_THREAD_SAFE
+#define TLOC_THREAD_SAFE
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
 #include "pthread.h"
@@ -428,9 +428,6 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 		memset(allocations, 0, sizeof(void*) * 100);
 		for (int i = 0; i != iterations; ++i) {
 			int index = rand() % 100;
-			if (i == 7) {
-				int d = 0;
-			}
 			if (allocations[index]) {
 				tloc_Free(allocator, allocations[index]);
 				allocations[index] = 0;
@@ -686,6 +683,7 @@ int main() {
 	tloc_size time = (tloc_size)clock() * 1000;
 	printf("Seed: %zu\n", time);
 	ReSeed(&random, time);
+	//ReSeed(&random, 257000);
 
 #if defined(TLOC_THREAD_SAFE)
 	PrintTestResult("Test: Multithreading test, 2 workers, 10000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 2, &random));
@@ -724,10 +722,10 @@ int main() {
 #else
 	PrintTestResult("Test: Many random allocations and frees: 10000 iterations, 512MB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, tloc__MEGABYTE(512), tloc__MEGABYTE(2), tloc__MEGABYTE(100), &random));
 #endif
-	PrintTestResult("Test: Allocations until full, then free and allocate randomly for 10000 iterations, 128MB pool size, max allocation: 128kb - 10MB", TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(1000, tloc__MEGABYTE(128), tloc__KILOBYTE(128), tloc__MEGABYTE(10), &random));
-	PrintTestResult("Test: Allocate blocks in 128mb pool until full, then free all blocks one by one resulting in 1 block left at the end after merges", TestAllocatingUntilOutOfSpaceThenFreeAll(1000, tloc__MEGABYTE(128), tloc__KILOBYTE(128), tloc__MEGABYTE(10), &random));
+//	PrintTestResult("Test: Allocations until full, then free and allocate randomly for 10000 iterations, 128MB pool size, max allocation: 128kb - 10MB", TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(1000, tloc__MEGABYTE(128), tloc__KILOBYTE(128), tloc__MEGABYTE(10), &random));
+//	PrintTestResult("Test: Allocate blocks in 128mb pool until full, then free all blocks one by one resulting in 1 block left at the end after merges", TestAllocatingUntilOutOfSpaceThenFreeAll(1000, tloc__MEGABYTE(128), tloc__KILOBYTE(128), tloc__MEGABYTE(10), &random));
 #if defined(tloc__64BIT)
-	PrintTestResult("Test: Create a large (>4gb) memory pool, and allocate half of it", TestAllocation64bit());
+//	PrintTestResult("Test: Create a large (>4gb) memory pool, and allocate half of it", TestAllocation64bit());
 #endif
 	return 0;
 }

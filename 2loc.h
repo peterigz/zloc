@@ -437,6 +437,9 @@ static inline tloc_bool tloc__valid_block(tloc_allocator *allocator, tloc_header
 	if (!block || !block->prev_physical_block || block->size == 0) {
 		return 0;
 	}
+	if ((void*)(tloc__block_size(block) + (char*)tloc__block_user_ptr(block)) <= allocator->end_of_pool) {
+		result += 1;
+	}
 	if (block->prev_physical_block != tloc__end(allocator)) {
 		ptrdiff_t diff = (char*)block - (char*)block->prev_physical_block;
 		result += tloc__block_size(block->prev_physical_block) + tloc__BLOCK_POINTER_OFFSET == diff;
@@ -455,7 +458,7 @@ static inline tloc_bool tloc__valid_block(tloc_allocator *allocator, tloc_header
 	if (result != 2) {
 		int d = 0;
 	}
-	return result == 2;
+	return result == 3;
 }
 
 static inline tloc_index tloc__find_next_size_up(tloc_fl_bitmap map, tloc_uint start) {
@@ -531,6 +534,7 @@ static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *bloc
 	allocator->first_level_bitmap |= 1ULL << fli;
 	allocator->second_level_bitmaps[fli] |= 1 << sli;
 	tloc__mark_block_as_free(allocator, block);
+	assert(tloc__valid_block(allocator, block));
 }
 
 /*
@@ -622,10 +626,12 @@ static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_head
 static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator, tloc_header *block) {
 	tloc_header *prev_block = block->prev_physical_block;
 	tloc_size offset_size = tloc__BLOCK_POINTER_OFFSET + tloc__block_size(prev_block) + tloc__block_size(block);
-	tloc_header *next_block = tloc__next_physical_block(block);
 	tloc__remove_block_from_segregated_list(allocator, prev_block);
 	tloc__set_block_size(prev_block, tloc__block_size(prev_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
-	tloc__set_prev_physical_block(next_block, prev_block);
+	if (!tloc__is_last_block(allocator, block)) {
+		tloc_header *next_block = tloc__next_physical_block(block);
+		tloc__set_prev_physical_block(next_block, prev_block);
+	}
 	tloc__zero_block(block);
 	return prev_block;
 }
