@@ -96,19 +96,12 @@ typedef unsigned int tloc_sl_bitmap;
 typedef unsigned int tloc_uint;
 typedef unsigned int tloc_thread_access;
 typedef int tloc_bool;
-#define TLOC_FORCE_32BIT
 
 #if (defined(_MSC_VER) && defined(_M_X64)) || defined(__x86_64__)
-#ifndef TLOC_FORCE_32BIT
 #define tloc__64BIT
 typedef size_t tloc_size;
 typedef size_t tloc_fl_bitmap;
 #define TLOC_ONE 1ULL
-#else
-typedef unsigned int tloc_size;
-typedef unsigned int tloc_fl_bitmap;
-#define TLOC_ONE 1U
-#endif
 #else
 typedef size_t tloc_size;
 typedef size_t tloc_fl_bitmap;
@@ -147,37 +140,6 @@ typedef size_t tloc_fl_bitmap;
 extern "C" {
 #endif
 
-enum tloc__constants {
-	tloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
-	tloc__MINIMUM_BLOCK_SIZE = 16,
-	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
-	tloc__SECOND_LEVEL_INDEX = 1 << tloc__SECOND_LEVEL_INDEX_LOG2,
-	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
-	tloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(tloc_size),
-	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
-	tloc__POINTER_SIZE = sizeof(void*)
-};
-
-typedef enum tloc__boundary_tag_flags {
-	tloc__BLOCK_IS_FREE = 1 << 0,
-	tloc__PREV_BLOCK_IS_FREE = 1 << 1,
-} tloc__boundary_tag_flags;
-
-typedef enum tloc__error_codes {
-	tloc__OK,
-	tloc__INVALID_FIRST_BLOCK,
-	tloc__INVALID_BLOCK_FOUND,
-	tloc__PHYSICAL_BLOCK_MISALIGNMENT,
-	tloc__INVALID_SEGRATED_LIST,
-	tloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST,
-	tloc__SECOND_LEVEL_BITMAPS_NOT_INITIALISED
-} tloc__error_codes;
-
-typedef enum tloc__thread_ops {
-	tloc__FREEING_BLOCK = 1 << 0,
-	tloc__ALLOCATING_BLOCK = 1 << 1
-} tloc__thread_ops;
-
 /*
 	Each block has a header that if used only has a pointer to the previous physical block
 	and the size. If the block is free then the prev and next free blocks are also stored.
@@ -214,6 +176,37 @@ typedef struct tloc_allocator {
 	tloc_sl_bitmap *second_level_bitmaps;
 	tloc_header ***segregated_lists;
 } tloc_allocator;
+
+enum tloc__constants {
+	tloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
+	tloc__MINIMUM_BLOCK_SIZE = 16,
+	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
+	tloc__SECOND_LEVEL_INDEX = 1 << tloc__SECOND_LEVEL_INDEX_LOG2,
+	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
+	tloc__BLOCK_POINTER_OFFSET = offsetof(tloc_header, prev_free_block),
+	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
+	tloc__POINTER_SIZE = sizeof(void*)
+};
+
+typedef enum tloc__boundary_tag_flags {
+	tloc__BLOCK_IS_FREE = 1 << 0,
+	tloc__PREV_BLOCK_IS_FREE = 1 << 1,
+} tloc__boundary_tag_flags;
+
+typedef enum tloc__error_codes {
+	tloc__OK,
+	tloc__INVALID_FIRST_BLOCK,
+	tloc__INVALID_BLOCK_FOUND,
+	tloc__PHYSICAL_BLOCK_MISALIGNMENT,
+	tloc__INVALID_SEGRATED_LIST,
+	tloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST,
+	tloc__SECOND_LEVEL_BITMAPS_NOT_INITIALISED
+} tloc__error_codes;
+
+typedef enum tloc__thread_ops {
+	tloc__FREEING_BLOCK = 1 << 0,
+	tloc__ALLOCATING_BLOCK = 1 << 1
+} tloc__thread_ops;
 
 #if defined (_MSC_VER) && (_MSC_VER >= 1400) && (defined (_M_IX86) || defined (_M_X64))
 /* Microsoft Visual C++ support on x86/X64 architectures. */

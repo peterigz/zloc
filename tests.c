@@ -5,7 +5,7 @@
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
 //#define TLOC_OUTPUT_ERROR_MESSAGES
-//#define TLOC_THREAD_SAFE
+#define TLOC_THREAD_SAFE
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
 #include "pthread.h"
@@ -64,7 +64,8 @@ void PrintTestResult(const char *message, int result) {
 static void tloc__output(void* ptr, size_t size, int free, void* user, int is_final_output)
 {
 	(void)user;
-	printf("\t%p %s size: %zi (%p)\n", ptr, free ? "free" : "used", size, ptr);
+	tloc_header *block = (tloc_header*)ptr;
+	printf("\t%p %s size: %zi (%p), (%p), (%p)\n", ptr, free ? "free" : "used", size, ptr, block->next_free_block, block->prev_free_block);
 	if (is_final_output) {
 		printf("\t------------- * ---------------\n");
 	}
@@ -421,7 +422,7 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 		void *allocations[100];
 		memset(allocations, 0, sizeof(void*) * 100);
 		for (int i = 0; i != iterations; ++i) {
-			if (i == 84) {
+			if (i == 12) {
 				int d = 0;
 			}
 			int index = rand() % 100;
@@ -431,6 +432,7 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 			}
 			else {
 				tloc_size allocation_size = (tloc_size)tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				//tloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
 				allocations[index] = tloc_Allocate(allocator, allocation_size);
 				if (allocations[index]) {
 					//Do a memset set to test if we're overwriting block headers
@@ -683,6 +685,9 @@ int main() {
 	tloc_size time = (tloc_size)clock() * 1000;
 	ReSeed(&random, time);
 	//ReSeed(&random, 257000);
+
+	size_t size_of_header = sizeof(tloc_header);
+	size_t size_of_size = sizeof(tloc_size);
 
 #if defined(TLOC_THREAD_SAFE)
 	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 2, &random));
