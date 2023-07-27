@@ -152,7 +152,7 @@ enum tloc__constants {
 	tloc__MINIMUM_BLOCK_SIZE = 16,
 	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
 	tloc__SECOND_LEVEL_INDEX = 1 << tloc__SECOND_LEVEL_INDEX_LOG2,
-	tloc__FIRST_LEVEL_INDEX_MAX = sizeof(tloc_size) == 4 ? 31 : 63,
+	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
 	tloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(tloc_size),
 	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
 	tloc__POINTER_SIZE = sizeof(void*)
