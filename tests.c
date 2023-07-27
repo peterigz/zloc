@@ -421,7 +421,7 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 		void *allocations[100];
 		memset(allocations, 0, sizeof(void*) * 100);
 		for (int i = 0; i != iterations; ++i) {
-			if (i == 12) {
+			if (i == 84) {
 				int d = 0;
 			}
 			int index = rand() % 100;
