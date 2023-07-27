@@ -81,6 +81,7 @@
 #define TLOC_INCLUDE_H
 
 #include <stdlib.h>
+#include <stddef.h>
 #include <assert.h>
 
 //Header
@@ -183,7 +184,7 @@ enum tloc__constants {
 	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
 	tloc__SECOND_LEVEL_INDEX = 1 << tloc__SECOND_LEVEL_INDEX_LOG2,
 	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
-	tloc__BLOCK_POINTER_OFFSET = offsetof(tloc_header, prev_free_block),
+	tloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(tloc_size),
 	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
 	tloc__POINTER_SIZE = sizeof(void*)
 };
@@ -259,6 +260,10 @@ static inline int tloc__scan_forward(tloc_size bitmap)
 #else
     return __builtin_ffs((int)bitmap) - 1;
 #endif
+}
+
+static inline tloc_thread_access tloc__compare_and_exchange(volatile tloc_thread_access* target, tloc_thread_access value, tloc_thread_access original) {
+	return __sync_val_compare_and_swap(target, original, value);
 }
 
 #endif

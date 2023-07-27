@@ -8,7 +8,7 @@
 #define TLOC_THREAD_SAFE
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
-#include "pthread.h"
+#include <pthread.h>
 #ifdef _WIN32
 #include <windows.h>
 #define tloc_sleep(seconds) Sleep(seconds)
@@ -25,7 +25,7 @@ typedef struct tloc_random {
 	unsigned long long seeds[2];
 } tloc_random;
 
-inline void Advance(tloc_random *random) {
+void _Advance(tloc_random *random) {
 	unsigned long long s1 = random->seeds[0];
 	unsigned long long s0 = random->seeds[1];
 	random->seeds[0] = s0;
@@ -33,13 +33,13 @@ inline void Advance(tloc_random *random) {
 	random->seeds[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5); // b, c
 }
 
-void ReSeed(tloc_random *random, unsigned long long seed) {
+void _ReSeed(tloc_random *random, unsigned long long seed) {
 	random->seeds[0] = seed;
 	random->seeds[1] = seed * 2;
-	Advance(random);
+	_Advance(random);
 }
 
-inline double Generate(tloc_random *random) {
+double _Generate(tloc_random *random) {
 	unsigned long long s1 = random->seeds[0];
 	unsigned long long s0 = random->seeds[1];
 	unsigned long long result = s0 + s1;
@@ -50,8 +50,8 @@ inline double Generate(tloc_random *random) {
 	return (double)result / TWO64f;
 }
 
-inline unsigned long long tloc_random_range(tloc_random *random, unsigned long long max) {
-	double g = Generate(random);
+unsigned long long _tloc_random_range(tloc_random *random, unsigned long long max) {
+	double g = _Generate(random);
 	double a = g * (double)max;
 	return (unsigned long long)a;
 };
@@ -431,7 +431,7 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 				allocations[index] = 0;
 			}
 			else {
-				tloc_size allocation_size = (tloc_size)tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
 				//tloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
 				allocations[index] = tloc_Allocate(allocator, allocation_size);
 				if (allocations[index]) {
@@ -461,7 +461,7 @@ int TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(tloc_uint iterati
 		void *allocations[1000];
 		memset(allocations, 0, sizeof(void*) * 1000);
 		for (int i = 0; i != 1000; ++i) {
-			tloc_size allocation_size = (tloc_size)tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+			tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
 			allocations[i] = tloc_Allocate(allocator, allocation_size);
 			if (!allocations[i]) {
 				break;
@@ -476,7 +476,7 @@ int TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(tloc_uint iterati
 				allocations[index] = 0;
 			}
 			else {
-				tloc_size allocation_size = (tloc_size)tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
 				allocations[index] = tloc_Allocate(allocator, allocation_size);
 				if (allocations[index]) {
 					//Do a memset set to test if we're overwriting block headers
@@ -507,7 +507,7 @@ int TestAllocatingUntilOutOfSpaceThenFreeAll(tloc_uint iterations, tloc_size poo
 		void *allocations[1000];
 		memset(allocations, 0, sizeof(void*) * 1000);
 		for (int i = 0; i != 1000; ++i) {
-			tloc_size allocation_size = (tloc_size)tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+			tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
 			allocations[i] = tloc_Allocate(allocator, allocation_size);
 			if (!allocations[i]) {
 				break;
@@ -551,7 +551,7 @@ int TestManyAllocationsAndFreesWithReset(tloc_uint iterations, tloc_size pool_si
 				allocations[index] = 0;
 			}
 			else {
-				tloc_size allocation_size = (tloc_size)tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
 				allocations[index] = tloc_Allocate(allocator, allocation_size);
 				if (allocations[index]) {
 					//Do a memset set to test if we're overwriting block headers
@@ -570,7 +570,7 @@ int TestManyAllocationsAndFreesWithReset(tloc_uint iterations, tloc_size pool_si
 				allocations[index] = 0;
 			}
 			else {
-				tloc_size allocation_size = (tloc_size)tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
 				allocations[index] = tloc_Allocate(allocator, allocation_size);
 				if (allocations[index]) {
 					//Do a memset set to test if we're overwriting block headers
@@ -617,6 +617,7 @@ typedef struct tloc_thread_test {
 	tloc_size max_allocation_size;
 } tloc_thread_test;
 
+#ifdef TLOC_THREAD_SAFE
 // Function that will be executed by the thread
 void *AllocationWorker(void *arg) {
 	tloc_thread_test *thread_test = (tloc_thread_test*)arg;
@@ -630,7 +631,7 @@ void *AllocationWorker(void *arg) {
 			thread_test->allocations[index] = 0;
 		}
 		else {
-			tloc_size allocation_size = (tloc_size)tloc_random_range(thread_test->random, thread_test->max_allocation_size - thread_test->min_allocation_size) + thread_test->min_allocation_size;
+			tloc_size allocation_size = (tloc_size)_tloc_random_range(thread_test->random, thread_test->max_allocation_size - thread_test->min_allocation_size) + thread_test->min_allocation_size;
 			thread_test->allocations[index] = tloc_Allocate(thread_test->allocator, allocation_size);
 			if (thread_test->allocations[index]) {
 				//Do a memset set to test if we're overwriting block headers
@@ -678,13 +679,14 @@ int TestMultithreading(tloc_uint iterations, tloc_size pool_size, tloc_size min_
 
 	return 1;
 }
+#endif
 
 int main() {
 
 	tloc_random random;
 	tloc_size time = (tloc_size)clock() * 1000;
-	ReSeed(&random, time);
-	//ReSeed(&random, 257000);
+	_ReSeed(&random, time);
+	//_ReSeed(&random, 257000);
 
 	size_t size_of_header = sizeof(tloc_header);
 	size_t size_of_size = sizeof(tloc_size);
