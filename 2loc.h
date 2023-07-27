@@ -54,7 +54,7 @@
 
 	Here's a basic usage example:
 
-	size_t size = 1024 * 1024 * 128;	//128MB
+	tloc_size size = 1024 * 1024 * 128;	//128MB
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
 	assert(allocator); Something went wrong, unable to initialise the allocator
@@ -96,16 +96,23 @@ typedef unsigned int tloc_sl_bitmap;
 typedef unsigned int tloc_uint;
 typedef unsigned int tloc_thread_access;
 typedef int tloc_bool;
+#define TLOC_FORCE_32BIT
 
 #if (defined(_MSC_VER) && defined(_M_X64)) || defined(__x86_64__)
 #ifndef TLOC_FORCE_32BIT
 #define tloc__64BIT
 typedef size_t tloc_size;
 typedef size_t tloc_fl_bitmap;
+#define TLOC_ONE 1ULL
 #else
 typedef unsigned int tloc_size;
 typedef unsigned int tloc_fl_bitmap;
+#define TLOC_ONE 1U
 #endif
+#else
+typedef size_t tloc_size;
+typedef size_t tloc_fl_bitmap;
+#define TLOC_ONE 1U
 #endif
 
 #ifndef MEMORY_ALIGNMENT_LOG2
@@ -145,7 +152,7 @@ enum tloc__constants {
 	tloc__MINIMUM_BLOCK_SIZE = 16,
 	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
 	tloc__SECOND_LEVEL_INDEX = 1 << tloc__SECOND_LEVEL_INDEX_LOG2,
-	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
+	tloc__FIRST_LEVEL_INDEX_MAX = sizeof(tloc_size) == 4 ? 31 : 63,
 	tloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(tloc_size),
 	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
 	tloc__POINTER_SIZE = sizeof(void*)
@@ -156,13 +163,9 @@ typedef enum tloc__boundary_tag_flags {
 	tloc__PREV_BLOCK_IS_FREE = 1 << 1,
 } tloc__boundary_tag_flags;
 
-static const tloc_size tloc__BLOCK_IS_LOCKED = 1ULL << tloc__FIRST_LEVEL_INDEX_MAX;
-static const tloc_size tloc__BLOCK_SIZE_MASK = ~(tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE | (1ULL << tloc__FIRST_LEVEL_INDEX_MAX));
-
 typedef enum tloc__error_codes {
 	tloc__OK,
 	tloc__INVALID_FIRST_BLOCK,
-	tloc__BLOCK_IS_LOCKED_BUT_SHOULD_NOT_BE,
 	tloc__INVALID_BLOCK_FOUND,
 	tloc__PHYSICAL_BLOCK_MISALIGNMENT,
 	tloc__INVALID_SEGRATED_LIST,
@@ -197,7 +200,7 @@ typedef struct tloc_allocator {
 	/*	Might not strictly need the following 3 items, I like them for convenience. */
 	tloc_header *first_block;
 	void *end_of_pool;
-	size_t total_memory;
+	tloc_size total_memory;
 #if defined(TLOC_THREAD_SAFE)
 	/* Multithreading protection*/
 	volatile tloc_thread_access access;
@@ -290,8 +293,8 @@ TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size);
 /*
 	A helper function to find the allocation size that takes into account the overhead of the allocator. So for example, let's say you want
 	to allocate 128mb for a pool of memory, this function will take that size and return a new size that will include the extra overhead required
-	by the allocator. The overhead inlcudes things like the first and second level bitmaps and the segregated list that stores pointers to free
-	blocks. Note that the size will be rounded up to the nearest tloc__MEMORY_ALIGNMENT.
+	by the allocator. The overhead inlcudes things like the first and second level bitmaps and the segregated list that stores pointers to the
+	head of free blocks. Note that the size will be rounded up to the nearest tloc__MEMORY_ALIGNMENT.
 
 	@param	tloc_size				The size that you want the memory pool to be
 	@returns tloc_size				The calculated size that will now include the required extra overhead for the allocator. You can now pass this
@@ -360,7 +363,7 @@ static inline void tloc__map(tloc_size size, tloc_index *fli, tloc_index *sli) {
 
 //Read only functions
 static inline tloc_bool tloc__has_free_block(const tloc_allocator *allocator, tloc_index fli, tloc_index sli) {
-	return allocator->first_level_bitmap & (1ULL << fli) && allocator->second_level_bitmaps[fli] & (1U << sli);
+	return allocator->first_level_bitmap & (TLOC_ONE << fli) && allocator->second_level_bitmaps[fli] & (1U << sli);
 }
 
 static inline tloc_bool tloc__is_used_block(const tloc_header *block) {
@@ -373,10 +376,6 @@ static inline tloc_bool tloc__is_free_block(const tloc_header *block) {
 
 static inline tloc_bool tloc__prev_is_free_block(const tloc_header *block) {
 	return block->size & tloc__PREV_BLOCK_IS_FREE;
-}
-
-static inline tloc_size tloc__is_locked_block(const tloc_header *block) {
-	return block->size & tloc__BLOCK_IS_LOCKED;
 }
 
 static inline tloc_bool tloc__is_aligned(tloc_size size, tloc_index alignment) {
@@ -404,7 +403,7 @@ static inline tloc_header *tloc__first_block(const tloc_allocator *allocator) {
 }
 
 static inline tloc_size tloc__block_size(const tloc_header *block) {
-	return block->size & tloc__BLOCK_SIZE_MASK;
+	return block->size & ~(tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);;
 }
 
 static inline tloc_header *tloc__block_from_allocation(const void *allocation) {
@@ -521,6 +520,7 @@ static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *bloc
 	//Get the size class of the block
 	tloc__map(tloc__block_size(block), &fli, &sli);
 	tloc_header *current_block_in_free_list = allocator->segregated_lists[fli][sli];
+	tloc_header *next_block0 = tloc__next_physical_block(block);
 	//Insert the block into the list by updating the next and prev free blocks of
 	//this and the current block in the free list. The current block in the free
 	//list may well be the end_block in the allocator so this just means that this
@@ -531,9 +531,11 @@ static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *bloc
 
 	allocator->segregated_lists[fli][sli] = block;
 	//Flag the bitmaps to mark that this size class now contains a free block
-	allocator->first_level_bitmap |= 1ULL << fli;
+	allocator->first_level_bitmap |= TLOC_ONE << fli;
 	allocator->second_level_bitmaps[fli] |= 1 << sli;
+	tloc_header *next_block1 = tloc__next_physical_block(block);
 	tloc__mark_block_as_free(allocator, block);
+	tloc_header *next_block2 = tloc__next_physical_block(block);
 	assert(tloc__valid_block(allocator, block));
 }
 
@@ -560,7 +562,7 @@ static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index
 		allocator->second_level_bitmaps[fli] &= ~(1 << sli);
 		if (allocator->second_level_bitmaps[fli] == 0) {
 			//And if the second level bitmap is 0 then the corresponding bit in the first lebel can be zero'd too.
-			allocator->first_level_bitmap &= ~(1ULL << fli);
+			allocator->first_level_bitmap &= ~(TLOC_ONE << fli);
 		}
 	}
 	tloc__mark_block_as_used(allocator, block);
@@ -642,7 +644,8 @@ static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator
 */
 static inline void tloc__merge_with_next_block_if_free(tloc_allocator *allocator, tloc_header *block) {
 	tloc_header *next_block = tloc__next_physical_block(block);
-	if (next_block->prev_physical_block == block && tloc__is_free_block(next_block)) {
+	assert(next_block->prev_physical_block == block);
+	if (tloc__is_free_block(next_block)) {
 		tloc__remove_block_from_segregated_list(allocator, next_block);
 		tloc__set_block_size(block, tloc__block_size(next_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
 		if (!tloc__is_last_block(allocator, next_block)) {
@@ -684,7 +687,7 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	memset(allocator, 0, sizeof(tloc_allocator));
 	allocator->end_block.next_free_block = &allocator->end_block;
 	allocator->end_block.prev_free_block = &allocator->end_block;
-	size_t array_offset = sizeof(tloc_allocator);
+	tloc_size array_offset = sizeof(tloc_allocator);
 
 	tloc_index scan_result;
 	//Get the number of first level size categorisations. Must not be larger then 31
@@ -705,7 +708,7 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	tloc_uint size_of_first_level_list = first_level_index_count * tloc__POINTER_SIZE;
 	tloc_uint segregated_list_size = (second_level_index_count * tloc__POINTER_SIZE * first_level_index_count) + (first_level_index_count * tloc__POINTER_SIZE);
 	tloc_uint lists_size = segregated_list_size + size_of_second_level_bitmap_list;
-	size_t minimum_size = lists_size + tloc__MINIMUM_BLOCK_SIZE + array_offset + tloc__BLOCK_POINTER_OFFSET;
+	tloc_size minimum_size = lists_size + tloc__MINIMUM_BLOCK_SIZE + array_offset + tloc__BLOCK_POINTER_OFFSET;
 	if (size < minimum_size) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to initialise allocator with a memory pool that is too small. Must be at least: %zi bytes\n", TLOC_ERROR_NAME, minimum_size);
 		return 0;
@@ -771,7 +774,7 @@ void tloc_Reset(tloc_allocator *allocator) {
 
 tloc_size tloc_AllocatorPoolSize(tloc_allocator *allocator) {
 	ptrdiff_t diff = (char*)allocator->end_of_pool - (char*)allocator->first_block;
-	return diff;
+	return (tloc_size)diff;
 }
 
 void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
@@ -879,7 +882,7 @@ int tloc_BlockCount(tloc_allocator *allocator) {
 	return count;
 }
 
-//--- Debugging tools
+//--- Debugging and validation tools
 tloc_bool tloc_ValidPointer(tloc_allocator *allocator, void *pointer) {
 	return pointer >= (void*)allocator && pointer <= (void*)((char*)allocator + allocator->total_memory);
 }
