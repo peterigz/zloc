@@ -161,7 +161,7 @@ tloc_header *tloc_SearchList(tloc_allocator *allocator, tloc_header *search) {
 //Test if passing a memory pool that is too small to the initialiser is handled gracefully
 int TestPoolTooSmall() {
 	void *memory = malloc(1024);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, 1024);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, 1024, 1024);
 	if (!allocator) {
 		tloc_free_memory(memory);
 		return 1;
@@ -174,7 +174,7 @@ int TestPoolTooSmall() {
 int TestFreeingAnInvalidAllocation() {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1));
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1), tloc__MEGABYTE(1));
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (allocator) {
 		void *allocation = malloc(tloc__KILOBYTE(1));
@@ -191,7 +191,7 @@ int TestFreeingAnInvalidAllocation() {
 int TestMemoryCorruptionDetection() {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1));
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1), tloc__MEGABYTE(1));
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (allocator) {
 		int *allocation = tloc_Allocate(allocator, sizeof(int) * 10);
@@ -210,7 +210,7 @@ int TestMemoryCorruptionDetection() {
 int TestMemoryCorruptionDetection2() {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1));
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1), tloc__MEGABYTE(1));
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (allocator) {
 		int *allocation = tloc_Allocate(allocator, sizeof(int) * 10);
@@ -227,7 +227,7 @@ int TestMemoryCorruptionDetection2() {
 
 int TestNonAlignedMemoryPool() {
 	void *memory = malloc(1023);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, 1023);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, 1023, 1023);
 	if (!allocator) {
 		tloc_free_memory(memory);
 		return 1;
@@ -240,7 +240,7 @@ int TestAllocateSingleOverAllocate() {
 	tloc_size size = 1024 * 1024;
 	int result = 1;
 	void *memory = malloc(size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size, size);
 	if (!allocator) {
 		result = 0;
 	}
@@ -256,7 +256,7 @@ int TestAllocateMultiOverAllocate() {
 	tloc_size size = 1024 * 1024;
 	int result = 1;
 	void *memory = malloc(size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size, size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -282,7 +282,7 @@ int TestAllocateFreeSameSizeBlocks() {
 	tloc_size size = tloc__MEGABYTE(16);
 	int result = 1;
 	void *memory = malloc(size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size, size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -330,7 +330,7 @@ int TestAllocationTooSmall() {
 	tloc_size size = 1024 * 1024;
 	int result = 1;
 	void *memory = malloc(size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size, size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -364,7 +364,7 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 	int result = 1;
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size, pool_size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -405,7 +405,7 @@ int TestManyAllocationsAndFreesAddPools(tloc_uint iterations, tloc_size pool_siz
 	int memory_index = 0;
 	memory[memory_index] = malloc(pool_size);
 	memset(memory[memory_index], 0, pool_size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory[memory_index++], pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory[memory_index++], pool_size, pool_size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -456,7 +456,7 @@ int TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(tloc_uint iterati
 	int result = 1;
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size, pool_size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -502,7 +502,7 @@ int TestAllocatingUntilOutOfSpaceThenFreeAll(tloc_uint iterations, tloc_size poo
 	int result = 1;
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size, pool_size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -539,7 +539,7 @@ int TestRemovingPool(tloc_uint iterations, tloc_size pool_size, tloc_size min_al
 	int result = 1;
 	void *memory = malloc(pool_size);
 	memset(memory, 0, pool_size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size, pool_size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -578,7 +578,7 @@ int TestRemovingExtraPool(tloc_uint iterations, tloc_size pool_size, tloc_size m
 	void *memory = malloc(pool_size);
 	tloc_pool *extra_pool = 0;
 	memset(memory, 0, pool_size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size, pool_size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -592,7 +592,7 @@ int TestRemovingExtraPool(tloc_uint iterations, tloc_size pool_size, tloc_size m
 			allocations[i] = tloc_Allocate(allocator, allocation_size);
 			if (!allocations[i]) {
 				void *extra_memory = malloc(pool_size);
-				extra_pool = tloc_AddPool(allocator, extra_memory, pool_size);
+				extra_pool = tloc_AddPool(allocator, extra_memory, pool_size, pool_size);
 				allocations[i] = tloc_Allocate(allocator, allocation_size);
 				break;
 			}
@@ -628,7 +628,7 @@ int TestAllocation64bit() {
 	tloc_size size = (1024ull * 1024ull * 1024ull * 6ull);	//6 gb
 	int result = 1;
 	void* memory = malloc(size);
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size, size);
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
@@ -682,7 +682,7 @@ int TestMultithreading(tloc_uint iterations, tloc_size pool_size, tloc_size min_
 	int result = 1;
 	void* memory = malloc(pool_size);
 	tloc_thread_test thread[8];
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size, pool_size);
 	if (!allocator) {
 		return 0;
 	}

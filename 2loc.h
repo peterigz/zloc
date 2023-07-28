@@ -168,6 +168,7 @@ typedef struct tloc_allocator {
 	how big these arrays are until we initialise the allocator as it will depend on how
 	big the memory pool is as that determins how many classes there are.*/
 	tloc_uint list_counts;
+	tloc_size max_block_size;
 	tloc_fl_bitmap first_level_bitmap;
 	tloc_sl_bitmap *second_level_bitmaps;
 	tloc_header ***segregated_lists;
@@ -269,9 +270,8 @@ This are the main functions you'll need to use this library, everything else is 
 */
 
 /*
-	Initialise an allocator. Pass a block of memory that you want to use with the allocator, this can be created with malloc or VirtualAlloc
-	or whatever your preference.
-	Make sure the size matches the size of the memory you're passing
+	Initialise an allocator. Pass a block of memory that you want to use to store the allocator data. This will not create a pool, only the 
+	necessary data structures to store the allocator.
 
 	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
 	@param	tloc_size				The size of the memory you're passing
@@ -281,18 +281,56 @@ This are the main functions you'll need to use this library, everything else is 
 									If something went wrong then 0 is returned. Define TLOC_OUTPUT_ERROR_MESSAGES before including this header
 									file to see any errors in the console.
 */
-TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size);
-TLOC_API tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size);
+TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_size max_block_size);
+
+/*
+	Initialise an allocator and a pool at the same time. The data stucture to store the allocator will be stored at the beginning of the memory
+	you pass to the function and the remaining memory will be used as the pool.
+
+	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
+	@param	tloc_size				The size of the memory you're passing
+	@returns tloc_allocator*		A pointer to a tloc_allocator which you'll need to use when calling tloc_Allocate or tloc_Free.
+									If something went wrong then 0 is returned. Define TLOC_OUTPUT_ERROR_MESSAGES before including this header
+									file to see any errors in the console.
+*/
+TLOC_API tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size, tloc_size max_block_size);
+
+/*
+	Add a new memory pool to the allocator. Pools don't have to all be the same size, adding a pool will create the biggest block it can within
+	the pool and then add that to the segregated list of free blocks in the allocator. All the pools in the allocator will be naturally linked
+	together in the segregated list because all blocks are linked together with a linked list either as physical neighbours or free blocks in
+	the segregated list.
+
+	@param	tloc_allocator*			A pointer to some previously initialised allocator
+	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
+	@param	tloc_size				The size of the memory you're passing
+	@returns tloc_pool*				A pointer to the pool 
+*/
 TLOC_API tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size);
+
+/*
+	Get the size of an allocator. The size will very based on the max block size that you initialise the allocator with. 
+
+	@param	tloc_allocator*			A pointer to some previously initialised allocator
+	@returns tloc_size				The size of the allocator in bytes
+*/
 tloc_size tloc_AllocatorSize(tloc_allocator *allocator);
-TLOC_API void *tloc_GetPool(tloc_allocator *allocator);
+
+/*
+	If you initialised an allocator with a pool then you can use this function to get a pointer to the start of the pool. It won't get a pointer
+	to any other pool in the allocator. You can just get that when you call tloc_AddPool.
+
+	@param	tloc_allocator*			A pointer to some previously initialised allocator
+	@returns tloc_pool				A pointer to the pool memory in the allocator
+*/
+TLOC_API tloc_pool *tloc_GetPool(tloc_allocator *allocator);
 
 /*
 	Allocate some memory within a tloc_allocator of the specified size. Minimum size is 16 bytes. 
 
 	@param	tloc_size				The size of the memory you're passing
 	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to 
-									no free memory.
+									no free memory. If that happens then you may want to add a pool at that point.
 */
 TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
 
@@ -309,10 +347,11 @@ TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
 TLOC_API int tloc_Free(tloc_allocator *allocator, void *allocation);
 
 /*
-	Reset an allocator back to it's initialised state. All allocations will be freed so make sure you don't try to reference or free any allocations
-	after doing this.
+	Remove a pool from an allocator. Note that all blocks in the pool must be free and therefore all merged together into one block (this happens
+	automatically as all blocks are freed are merged together into bigger blocks.
 
 	@param tloc_allocator*			A pointer to a tcoc_allocator that you want to reset
+	@param tloc_allocator*			A pointer to the memory pool that you want to free. You get this pointer when you add a pool to the allocator.
 */
 TLOC_API tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool);
 
@@ -623,7 +662,7 @@ static inline void tloc__merge_with_next_block(tloc_allocator *allocator, tloc_h
 #include <string.h>
 
 //Definitions
-tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
+tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_size max_block_size) {
 	if (!memory) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", TLOC_ERROR_NAME);
 		return 0;
@@ -636,11 +675,12 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	memset(allocator, 0, sizeof(tloc_allocator));
 	allocator->end_block.next_free_block = &allocator->end_block;
 	allocator->end_block.prev_free_block = &allocator->end_block;
+	allocator->max_block_size = tloc__align_size_up(max_block_size, tloc__MEMORY_ALIGNMENT);
 	tloc_size array_offset = sizeof(tloc_allocator);
 
 	tloc_index scan_result;
 	//Get the number of first level size categorisations. Must not be larger then 31
-	scan_result = tloc__scan_reverse(size);
+	scan_result = tloc__scan_reverse(max_block_size);
 	tloc_uint first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
 	//Each first level size class then splits into finer classes by the second level index log2
 	tloc_uint second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
@@ -657,9 +697,9 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	tloc_uint size_of_first_level_list = first_level_index_count * tloc__POINTER_SIZE;
 	tloc_uint segregated_list_size = (second_level_index_count * tloc__POINTER_SIZE * first_level_index_count) + (first_level_index_count * tloc__POINTER_SIZE);
 	tloc_uint lists_size = segregated_list_size + size_of_second_level_bitmap_list;
-	tloc_size minimum_size = lists_size + tloc__MINIMUM_BLOCK_SIZE + array_offset + tloc__BLOCK_POINTER_OFFSET;
+	tloc_size minimum_size = lists_size + array_offset;
 	if (size < minimum_size) {
-		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to initialise allocator with a memory pool that is too small. Must be at least: %zi bytes\n", TLOC_ERROR_NAME, minimum_size);
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to initialise allocator with a memory allocation that is too small. Must be at least: %zi bytes\n", TLOC_ERROR_NAME, minimum_size + tloc__MINIMUM_BLOCK_SIZE);
 		return 0;
 	}
 
@@ -681,8 +721,8 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	return allocator;
 }
 
-tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size) {
-	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
+tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size, tloc_size max_block_size) {
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, max_block_size);
 	if (!allocator) {
 		return 0;
 	}
@@ -763,6 +803,10 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	size = tloc__align_size_up(size, tloc__MEMORY_ALIGNMENT);
 	if (size < tloc__MINIMUM_BLOCK_SIZE) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too small. Minimum size is %u but trying to allocate %zu bytes\n", TLOC_ERROR_NAME, tloc__MINIMUM_BLOCK_SIZE, size);
+		return NULL;
+	}
+	else if (size >= allocator->max_block_size) {
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too large. The largest block size that this allocator allows is %zu bytes but trying to allocate %zu\n", TLOC_ERROR_NAME, allocator->max_block_size, size);
 		return NULL;
 	}
 	tloc__map(size, &fli, &sli);
