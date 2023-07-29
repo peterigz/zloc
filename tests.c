@@ -6,8 +6,9 @@
 #if !defined(TLOC_DEV_MODE)
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
-//#define TLOC_OUTPUT_ERROR_MESSAGES
+#define TLOC_OUTPUT_ERROR_MESSAGES
 #define TLOC_THREAD_SAFE
+#define TLOC_MAX_SIZE_INDEX 35		//max block size 34GB
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
 #include <pthread.h>
@@ -79,8 +80,8 @@ static void tloc__output(void* ptr, size_t size, int free, void* user, int is_fi
 //Some helper functions for debugging
 //Makes sure that all blocks in the segregated list of free blocks are all valid
 tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
-	for (int fli = 0; fli != tloc__allocator_first_level_index_count(allocator); ++fli) {
-		for (int sli = 0; sli != tloc__allocator_second_level_index_count(allocator); ++sli) {
+	for (int fli = 0; fli != tloc__FIRST_LEVEL_INDEX_COUNT; ++fli) {
+		for (int sli = 0; sli != tloc__SECOND_LEVEL_INDEX_COUNT; ++sli) {
 			tloc_header *block = allocator->segregated_lists[fli][sli];
 			if (block->size) {
 				tloc_index size_fli, size_sli;
@@ -99,9 +100,9 @@ tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
 
 //The segregated list of free blocks should never contain any null blocks, this seeks them out.
 tloc_bool tloc_CheckForNullBlocksInList(tloc_allocator *allocator) {
-	for (int fli = 0; fli != tloc__allocator_first_level_index_count(allocator); ++fli) {
+	for (int fli = 0; fli != tloc__FIRST_LEVEL_INDEX_COUNT; ++fli) {
 		if (allocator->first_level_bitmap & (1ULL << fli)) {
-			for (int sli = 0; sli != tloc__allocator_second_level_index_count(allocator); ++sli) {
+			for (int sli = 0; sli != tloc__SECOND_LEVEL_INDEX_COUNT; ++sli) {
 				if (allocator->second_level_bitmaps[fli] & (1U << sli)) {
 					if (allocator->segregated_lists[fli][sli]->prev_physical_block == 0) {
 						return 0;
@@ -115,8 +116,8 @@ tloc_bool tloc_CheckForNullBlocksInList(tloc_allocator *allocator) {
 
 //Search the segregated list of free blocks for a given block
 tloc_bool tloc_BlockExistsInSegregatedList(tloc_allocator *allocator, tloc_header* block) {
-	for (int fli = 0; fli != tloc__allocator_first_level_index_count(allocator); ++fli) {
-		for (int sli = 0; sli != tloc__allocator_second_level_index_count(allocator); ++sli) {
+	for (int fli = 0; fli != tloc__FIRST_LEVEL_INDEX_COUNT; ++fli) {
+		for (int sli = 0; sli != tloc__SECOND_LEVEL_INDEX_COUNT; ++sli) {
 			tloc_header *current = allocator->segregated_lists[fli][sli];
 			while (current != tloc__end(allocator)) {
 				if (current == block) {
@@ -241,23 +242,25 @@ int TestNonAlignedMemoryPool() {
 }
 
 int TestAllocateSingleOverAllocate() {
-	tloc_size size = 1024 * 1024;
+	tloc_size size = tloc__MEGABYTE(2);
 	int result = 1;
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
 	if (!allocator) {
 		result = 0;
 	}
-	void *allocation = tloc_Allocate(allocator, size);
-	if (allocation) {
-		result = 0;
+	else {
+		void *allocation = tloc_Allocate(allocator, size);
+		if (allocation) {
+			result = 0;
+		}
 	}
 	tloc_free_memory(memory);
 	return result;
 }
 
 int TestAllocateMultiOverAllocate() {
-	tloc_size size = 1024 * 1024;
+	tloc_size size = tloc__MEGABYTE(2);
 	int result = 1;
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
@@ -331,7 +334,7 @@ int TestAllocateFreeSameSizeBlocks() {
 
 //Test allocating some memory that is too small
 int TestAllocationTooSmall() {
-	tloc_size size = 1024 * 1024;
+	tloc_size size = tloc__MEGABYTE(2);
 	int result = 1;
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
