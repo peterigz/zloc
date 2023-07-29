@@ -44,7 +44,7 @@
 	tloc_size size = 1024 * 1024 * 128;	//128MB
 	void *memory = malloc(size);
 	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
-	assert(allocator); Something went wrong, unable to initialise the allocator
+	TLOC_ASSERT(allocator); Something went wrong, unable to initialise the allocator
 
 	int *int_allocation = tloc_Allocate(allocator, sizeof(int) * 100);
 	if(int_allocation) {
@@ -54,7 +54,7 @@
 		for (int i = 0; i != 100; ++i) {
 			printf("%i\n", int_allocation[i]);
 		}
-		assert(tloc_Free(allocator, int_allocation));	//Unable to free the allocation
+		TLOC_ASSERT(tloc_Free(allocator, int_allocation));	//Unable to free the allocation
 	} else {
 		//Unable to allocate
 	}
@@ -96,6 +96,16 @@ typedef unsigned int tloc_thread_access;
 typedef int tloc_bool;
 typedef void* tloc_pool;
 
+#if !defined (TLOC_ASSERT)
+#define TLOC_ASSERT assert
+#endif
+
+#define tloc__is_pow2(x) ((x) && !((x) & ((x) - 1)))
+#define tloc__glue2(x, y) x ## y
+#define tloc__glue(x, y) tloc__glue2(x, y)
+#define tloc__static_assert(exp) \
+	typedef char tloc__glue(static_assert, __LINE__) [(exp) ? 1 : -1]
+
 #if (defined(_MSC_VER) && defined(_M_X64)) || defined(__x86_64__)
 #define tloc__64BIT
 typedef size_t tloc_size;
@@ -135,6 +145,16 @@ typedef size_t tloc_fl_bitmap;
 #define tloc__MEGABYTE(Value) (tloc__KILOBYTE(Value) * 1024LL)
 #define tloc__GIGABYTE(Value) (tloc__MEGABYTE(Value) * 1024LL)
 
+#ifndef TLOC_MAX_BLOCK_SIZE
+#if defined(tloc__64BIT)
+#define TLOC_MAX_BLOCK_SIZE tloc__GIGABYTE(4)
+#else
+#define TLOC_MAX_BLOCK_SIZE tloc__GIGABYTE(1)
+#endif
+#endif
+
+tloc__static_assert(tloc__is_pow2(TLOC_MAX_BLOCK_SIZE));
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -168,7 +188,6 @@ typedef struct tloc_allocator {
 	how big these arrays are until we initialise the allocator as it will depend on how
 	big the memory pool is as that determins how many classes there are.*/
 	tloc_uint list_counts;
-	tloc_size max_block_size;
 	tloc_fl_bitmap first_level_bitmap;
 	tloc_sl_bitmap *second_level_bitmaps;
 	tloc_header ***segregated_lists;
@@ -281,7 +300,7 @@ This are the main functions you'll need to use this library, everything else is 
 									If something went wrong then 0 is returned. Define TLOC_OUTPUT_ERROR_MESSAGES before including this header
 									file to see any errors in the console.
 */
-TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_size max_block_size);
+TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size);
 
 /*
 	Initialise an allocator and a pool at the same time. The data stucture to store the allocator will be stored at the beginning of the memory
@@ -293,7 +312,7 @@ TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, 
 									If something went wrong then 0 is returned. Define TLOC_OUTPUT_ERROR_MESSAGES before including this header
 									file to see any errors in the console.
 */
-TLOC_API tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size, tloc_size max_block_size);
+TLOC_API tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size);
 
 /*
 	Add a new memory pool to the allocator. Pools don't have to all be the same size, adding a pool will create the biggest block it can within
@@ -309,12 +328,11 @@ TLOC_API tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_siz
 TLOC_API tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size);
 
 /*
-	Get the size of an allocator. The size will very based on the max block size that you initialise the allocator with. 
+	Get the structure size of an allocator. The size will very based on the TLOC_MAX_BLOCK_SIZE allocator which you can override if needed.
 
-	@param	tloc_allocator*			A pointer to some previously initialised allocator
-	@returns tloc_size				The size of the allocator in bytes
+	@returns tloc_size				The struct size of the allocator in bytes
 */
-tloc_size tloc_AllocatorSize(tloc_allocator *allocator);
+tloc_size tloc_AllocatorSize();
 
 /*
 	If you initialised an allocator with a pool then you can use this function to get a pointer to the start of the pool. It won't get a pointer
@@ -339,7 +357,7 @@ TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
 	fragmentation as much as possible. A check is also done to confirm that the block being freed is still valid and detect any memory corruption
 	due to out of bounds writing of this or potentially other blocks.  
 
-	It's recommended to call this function with an assert: assert(tloc_Free(allocator, allocation));
+	It's recommended to call this function with an assert: TLOC_ASSERT(tloc_Free(allocator, allocation));
 	An error is also output to console as long as TLOC_OUTPUT_ERROR_MESSAGES is defined.
 
 	@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
@@ -426,8 +444,12 @@ static inline tloc_bool tloc__next_block_is_free(const tloc_header *block) {
 	return tloc__is_free_block(tloc__next_physical_block(block));
 }
 
+static inline tloc_size tloc__allocator_size(tloc_allocator *allocator) {
+	return allocator->list_counts >> 16;
+}
+
 static inline tloc_header *tloc__allocator_first_block(tloc_allocator *allocator) {
-	return (tloc_header*)((char*)allocator + tloc_AllocatorSize(allocator) - tloc__POINTER_SIZE);
+	return (tloc_header*)((char*)allocator + tloc__allocator_size(allocator) - tloc__POINTER_SIZE);
 }
 
 static inline tloc_bool tloc__is_last_block_in_pool(const tloc_header *block) {
@@ -540,7 +562,7 @@ static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index
 	//If the block in the segregated list is actually the end_block then something went very wrong.
 	//Somehow the segregated lists had the end block assigned but the first or second level bitmaps
 	//did not have the masks assigned
-	assert(block != &allocator->end_block);
+	TLOC_ASSERT(block != &allocator->end_block);
 	if (block->next_free_block != &allocator->end_block) {
 		//If there are more free blocks in this size class then shift the next one down and terminate the prev_free_block
 		allocator->segregated_lists[fli][sli] = block->next_free_block;
@@ -569,8 +591,8 @@ static inline void tloc__remove_block_from_segregated_list(tloc_allocator *alloc
 	tloc__map(tloc__block_size(block), &fli, &sli);
 	tloc_header *prev_block = block->prev_free_block;
 	tloc_header *next_block = block->next_free_block;
-	assert(prev_block);
-	assert(next_block);
+	TLOC_ASSERT(prev_block);
+	TLOC_ASSERT(next_block);
 	next_block->prev_free_block = prev_block;
 	prev_block->next_free_block = next_block;
 	if (allocator->segregated_lists[fli][sli] == block) {
@@ -592,7 +614,7 @@ static inline void tloc__remove_block_from_segregated_list(tloc_allocator *alloc
 	If split then the trimmed amount is added back to the segregated list of free blocks.
 */
 static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_header *block, tloc_size size) {
-	assert(!tloc__is_last_block_in_pool(block));
+	TLOC_ASSERT(!tloc__is_last_block_in_pool(block));
 	tloc_size size_plus_overhead = size + tloc__BLOCK_POINTER_OFFSET;
 	if (size_plus_overhead + tloc__MINIMUM_BLOCK_SIZE > tloc__block_size(block)) {
 		return (void*)((char*)block + tloc__BLOCK_POINTER_OFFSET);
@@ -615,7 +637,7 @@ static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_head
 	both ways.
 */
 static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator, tloc_header *block) {
-	assert(!tloc__is_last_block_in_pool(block));
+	TLOC_ASSERT(!tloc__is_last_block_in_pool(block));
 	tloc_header *prev_block = block->prev_physical_block;
 	tloc_size offset_size = tloc__BLOCK_POINTER_OFFSET + tloc__block_size(prev_block) + tloc__block_size(block);
 	tloc__remove_block_from_segregated_list(allocator, prev_block);
@@ -632,8 +654,8 @@ static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator
 */
 static inline void tloc__merge_with_next_block(tloc_allocator *allocator, tloc_header *block) {
 	tloc_header *next_block = tloc__next_physical_block(block);
-	assert(next_block->prev_physical_block == block);	//could be potentional memory corruption. Check that you're not write outside the boundary of the block size
-	assert(!tloc__is_last_block_in_pool(next_block));
+	TLOC_ASSERT(next_block->prev_physical_block == block);	//could be potentional memory corruption. Check that you're not write outside the boundary of the block size
+	TLOC_ASSERT(!tloc__is_last_block_in_pool(next_block));
 	tloc__remove_block_from_segregated_list(allocator, next_block);
 	tloc__set_block_size(block, tloc__block_size(next_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
 	tloc_header *block_after_next = tloc__next_physical_block(next_block);
@@ -659,7 +681,7 @@ static inline void tloc__merge_with_next_block(tloc_allocator *allocator, tloc_h
 #include <string.h>
 
 //Definitions
-tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_size max_block_size) {
+tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
 	if (!memory) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", TLOC_ERROR_NAME);
 		return 0;
@@ -672,12 +694,11 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_size
 	memset(allocator, 0, sizeof(tloc_allocator));
 	allocator->end_block.next_free_block = &allocator->end_block;
 	allocator->end_block.prev_free_block = &allocator->end_block;
-	allocator->max_block_size = tloc__align_size_up(max_block_size, tloc__MEMORY_ALIGNMENT);
 	tloc_size array_offset = sizeof(tloc_allocator);
 
 	tloc_index scan_result;
 	//Get the number of first level size categorisations. Must not be larger then 31
-	scan_result = tloc__scan_reverse(max_block_size);
+	scan_result = tloc__scan_reverse(TLOC_MAX_BLOCK_SIZE);
 	tloc_uint first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
 	//Each first level size class then splits into finer classes by the second level index log2
 	tloc_uint second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
@@ -718,27 +739,34 @@ tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size, tloc_size
 	return allocator;
 }
 
-tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size, tloc_size max_block_size) {
-	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size, max_block_size);
+tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size) {
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
 	if (!allocator) {
 		return 0;
 	}
-	tloc_AddPool(allocator, tloc_GetPool(allocator), size - tloc_AllocatorSize(allocator));
+	tloc_AddPool(allocator, tloc_GetPool(allocator), size - tloc__allocator_size(allocator));
 	return allocator;
 }
 
-tloc_size tloc_AllocatorSize(tloc_allocator *allocator) {
-	return allocator->list_counts >> 16;
+tloc_size tloc_AllocatorSize() {
+	tloc_index scan_result;
+	scan_result = tloc__scan_reverse(TLOC_MAX_BLOCK_SIZE);
+	tloc_uint first_level_index_count = tloc__Min(scan_result, tloc__FIRST_LEVEL_INDEX_MAX) + 1;
+	tloc_uint second_level_index_count = 1 << tloc__SECOND_LEVEL_INDEX_LOG2;
+	tloc_uint size_of_second_level_bitmap_list = first_level_index_count * sizeof(tloc_index);
+	tloc_uint segregated_list_size = (second_level_index_count * tloc__POINTER_SIZE * first_level_index_count) + (first_level_index_count * tloc__POINTER_SIZE);
+	tloc_uint lists_size = segregated_list_size + size_of_second_level_bitmap_list;
+	return sizeof(tloc_allocator) + lists_size;
 }
 
 tloc_pool *tloc_GetPool(tloc_allocator *allocator) {
-	return (void*)((char*)allocator + tloc_AllocatorSize(allocator));
+	return (void*)((char*)allocator + tloc__allocator_size(allocator));
 }
 
 tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size) {
 #if defined(TLOC_THREAD_SAFE)
 	tloc__lock_thread_access(allocator);
-	assert(allocator->access != 0);
+	TLOC_ASSERT(allocator->access != 0);
 #endif
 	//Offset it back by the pointer size, we don't need the prev_physical block pointer as there is none
 	//for the first block in the pool
@@ -749,7 +777,7 @@ tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size)
 
 	//Make sure it aligns
 	tloc__set_block_size(block, tloc__align_size_down(tloc__block_size(block), tloc__MEMORY_ALIGNMENT));
-	assert(tloc__block_size(block) > tloc__MINIMUM_BLOCK_SIZE);
+	TLOC_ASSERT(tloc__block_size(block) > tloc__MINIMUM_BLOCK_SIZE);
 	tloc__block_set_free(block);
 	tloc__block_set_prev_used(block);
 
@@ -770,7 +798,7 @@ tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size)
 tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool) {
 #if defined(TLOC_THREAD_SAFE)
 	tloc__lock_thread_access(allocator);
-	assert(allocator->access != 0);
+	TLOC_ASSERT(allocator->access != 0);
 #endif
 	tloc_header *block = tloc__first_block_in_pool(pool);
 	
@@ -781,19 +809,19 @@ tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool) {
 #endif
 		return 1;
 	}
-	else {
 #if defined(TLOC_THREAD_SAFE)
-		tloc__unlock_thread_access(allocator);
+	tloc__unlock_thread_access(allocator);
+	TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: In order to remove a pool there must be only 1 free block in the pool. Was possibly freed by another thread\n", TLOC_ERROR_NAME);
+#else
+	TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: In order to remove a pool there must be only 1 free block in the pool.\n", TLOC_ERROR_NAME);
 #endif
-		return 0;
-		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: In order to remove a pool there must be only 1 free block in the pool.\n", TLOC_ERROR_NAME);
-	}
+	return 0;
 }
 
 void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 #if defined(TLOC_THREAD_SAFE)
 	tloc__lock_thread_access(allocator);
-	assert(allocator->access != 0);
+	TLOC_ASSERT(allocator->access != 0);
 #endif
 	tloc_index fli;
 	tloc_index sli;
@@ -802,8 +830,8 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too small. Minimum size is %u but trying to allocate %zu bytes\n", TLOC_ERROR_NAME, tloc__MINIMUM_BLOCK_SIZE, size);
 		return NULL;
 	}
-	else if (size >= allocator->max_block_size) {
-		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too large. The largest block size that this allocator allows is %zu bytes but trying to allocate %zu\n", TLOC_ERROR_NAME, allocator->max_block_size, size);
+	else if (size > TLOC_MAX_BLOCK_SIZE) {
+		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too large. The largest block size that this allocator allows is %zu bytes but trying to allocate %zu\n", TLOC_ERROR_NAME, TLOC_MAX_BLOCK_SIZE, size);
 		return NULL;
 	}
 	tloc__map(size, &fli, &sli);
@@ -828,7 +856,7 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 		if (fli > -1) {
 			sli = tloc__scan_forward(allocator->second_level_bitmaps[fli]);
 			tloc_header *block = tloc__pop_block(allocator, fli, sli);
-			assert(tloc__block_size(block) > size);
+			TLOC_ASSERT(tloc__block_size(block) > size);
 			void *allocation = tloc__maybe_split_block(allocator, block, size);
 #if defined(TLOC_THREAD_SAFE)
 			tloc__unlock_thread_access(allocator);
@@ -838,7 +866,7 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	}
 	else {
 		tloc_header *block = tloc__pop_block(allocator, fli, sli);
-		assert(tloc__block_size(block) > size);
+		TLOC_ASSERT(tloc__block_size(block) > size);
 		void *allocation = tloc__maybe_split_block(allocator, block, size);
 #if defined(TLOC_THREAD_SAFE)
 		tloc__unlock_thread_access(allocator);
@@ -854,14 +882,14 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 }
 
 int tloc_Free(tloc_allocator *allocator, void* allocation) {
-	assert(allocation);		//Tried to free a null pointer
+	TLOC_ASSERT(allocation);		//Tried to free a null pointer
 #if defined(TLOC_THREAD_SAFE)
 	tloc__lock_thread_access(allocator);
-	assert(allocator->access != 0);
+	TLOC_ASSERT(allocator->access != 0);
 #endif
 	tloc_header *block = tloc__block_from_allocation(allocation);
 	if (tloc__prev_is_free_block(block)) {
-		assert(block->prev_physical_block);		//Must be a valid previous physical block
+		TLOC_ASSERT(block->prev_physical_block);		//Must be a valid previous physical block
 		block = tloc__merge_with_prev_block(allocator, block);
 	}
 	if (tloc__next_block_is_free(block)) {
