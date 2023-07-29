@@ -1,4 +1,4 @@
-#2loc - A Two Level Segregated Fit Memory Allocator
+# 2loc - A Two Level Segregated Fit Memory Allocator
 
 This software is dual-licensed to the public domain and under the following license: you are granted a perpetual, irrevocable license to copy, modify, publish, and distribute this file as you see fit.
 
@@ -8,12 +8,14 @@ TLSF: a New Dynamic Memory Allocator for Real-Time Systems [not so new now, the 
 
 Thanks to the authors of the paper and also Sean Barret for his how to make a single header-file library guidelines, and also to Matthew Conte who's own TLSF lib I referenced when trying to understand how the algorythm works. His library can be found here: https://github.com/mattconte/tlsf
 
-##What's this library for?
-This library is for sub allocating memory blocks within larger memory allocation pools that you might create with malloc or VirtualAlloc etc. 
+## What's this library for?
+This library is for sub allocating memory blocks within larger memory allocation pools that you might create with malloc or VirtualAlloc etc.
 
-Allocation and freeing those memory blocks happens at O(1) time complexity and should for the most part keep fragmentation at a minimum.
+Allocating and freeing those memory blocks happens at O(1) time complexity and should for the most part keep fragmentation at a minimum.
 
-How do I use it?
+This is meant for use in trusted environments or apps where security isn't going to be an issue. I made it as a convenient way to sub allocate in larger memory pools to avoid clogging things up with lots of mallocs everywhere. I can use this to easily track memory usage in my programs and if I need to dump the program state to disk if needed which is a lot easier to do when you have your memory pool(s) in one place. You can of course use VirtualAlloc or equivalent but it still gets messy when you're dynamically allocating arrays that might grow in size get freed etc and need a nice way to keep fragmentation under control which this algorithm does well.
+
+## How do I use it?
 Add:
 ```
 #define TLOC_IMPLEMENTATION
@@ -29,11 +31,11 @@ before you include this file in *one* C or C++ file to create the implementation
 
 The interface is very straightforward. Simply allocate a block of memory that you want to use for your pool and then call tloc_Allocate to allocate blocks within that pool and tloc_Free when you're done with an allocation. Don't forget to free the orinal memory you created in the first place. The Allocator doesn't care what you use to create the memory to use with the allocator only that it's read and writable to.
 
-##The main commands you will use
+## The main commands you will use
 
 ```tloc_InitialiseAllocator(void *memory_pointer);```
 
-This initialises an allocator without a pool so it just sets up the necessary allocator data structure to manage all the blocks that are allocated. Pass the size of the memory. The memory pointer must of size tloc_AllocatorSize() or sizeof(tloc_allocator).
+This initialises an allocator without a pool so it just sets up the necessary allocator data structure to manage all the blocks that are allocated. The memory pointer must pointer to memory that is of size tloc_AllocatorSize() or sizeof(tloc_allocator).
 
 ```tloc_AddPool(tloc_allocator *allocator, void *memory_pointer, tloc_size size_of_memory);```
 
@@ -49,13 +51,13 @@ Allocate a block of memory using the allocator you pass to the function. The all
 
 ```tloc_Free(tloc_allocator *allocator, void *pointer);```
 
-Free a previously allocated memory block. Just pass the allocator that allocated the memory and a pointer to the actual allocated memory. The memory block will be merged with neighbouring free blocks if and then added back into the allocator's list of free blocks.
+Free a previously allocated memory block. Just pass the allocator that allocated the memory and a pointer to the actual allocated memory. The memory block will be merged with neighbouring free blocks and then added back into the allocator's list of free blocks.
 
 ```tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool);```
 
 Remove a pool from the allocator that you previously added. You can only do this if all blocks in the pool are free.
 
-Here's some basic usage examples:
+## Here's some basic usage examples:
 
 ```
 tloc_size size = 1024 * 1024 * 128;	//128MB
