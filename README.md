@@ -104,7 +104,7 @@ if(int_allocation) {
 free(memory);
 ```
 
-You can also take a look at the tests.c file for more examples of usage.
+You can also take a look at the tests.c file for more examples of usage. If you want to run threaded tests on windows then you'll need to grab pthred for windows and add pthread.h and the dll or static lib to your compile.
 
 Is it thread safe?
 define *TLOC_THREAD_SAFE* before you include 2loc.h to make each call to tloc_Allocate and tloc_Free lock down the allocator. Basically all it does is lock the allocator so that only one process can free or allocate at the same time. Future versions would probably handle this with separate pools per thread.
