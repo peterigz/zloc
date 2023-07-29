@@ -299,7 +299,7 @@ This are the main functions you'll need to use this library, everything else is 
 									If something went wrong then 0 is returned. Define TLOC_OUTPUT_ERROR_MESSAGES before including this header
 									file to see any errors in the console.
 */
-TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size);
+TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory);
 
 /*
 	Initialise an allocator and a pool at the same time. The data stucture to store the allocator will be stored at the beginning of the memory
@@ -332,7 +332,7 @@ TLOC_API tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_s
 
 	@returns tloc_size				The struct size of the allocator in bytes
 */
-tloc_size tloc_AllocatorSize();
+TLOC_API tloc_size tloc_AllocatorSize();
 
 /*
 	If you initialised an allocator with a pool then you can use this function to get a pointer to the start of the pool. It won't get a pointer
@@ -669,19 +669,9 @@ static inline void tloc__merge_with_next_block(tloc_allocator *allocator, tloc_h
 #include <string.h>
 
 //Definitions
-tloc_allocator *tloc_InitialiseAllocator(void *memory, tloc_size size) {
+tloc_allocator *tloc_InitialiseAllocator(void *memory) {
 	if (!memory) {
 		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", TLOC_ERROR_NAME);
-		return 0;
-	}
-	if (!tloc__is_aligned(size, tloc__MEMORY_ALIGNMENT)) {
-		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: memory passed to allocator is not aligned to: %u bytes\n", TLOC_ERROR_NAME, tloc__MEMORY_ALIGNMENT);
-		return 0;
-	}
-
-	tloc_size array_offset = sizeof(tloc_allocator);
-	if (size < array_offset) {
-		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Tried to initialise allocator with a memory allocation that is too small. Must be at least: %zi bytes\n", TLOC_ERROR_NAME, array_offset);
 		return 0;
 	}
 
@@ -707,7 +697,7 @@ tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size) {
 		return 0;
 	}
 
-	tloc_allocator *allocator = tloc_InitialiseAllocator(memory, size);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory);
 	if (!allocator) {
 		return 0;
 	}
