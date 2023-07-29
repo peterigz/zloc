@@ -6,16 +6,23 @@
 #if !defined(TLOC_DEV_MODE)
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
-#define TLOC_OUTPUT_ERROR_MESSAGES
+//#define TLOC_OUTPUT_ERROR_MESSAGES
 #define TLOC_THREAD_SAFE
 #define TLOC_MAX_SIZE_INDEX 35		//max block size 34GB
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
-#include <pthread.h>
 #ifdef _WIN32
+#ifdef TLOC_THREAD_SAFE	
+#include <pthread.h>
+typedef void *(PTW32_CDECL *tloc__allocation_thread)(void*);
+#endif
 #include <windows.h>
 #define tloc_sleep(seconds) Sleep(seconds)
 #else
+#ifdef TLOC_THREAD_SAFE	
+#include <pthread.h>
+typedef void *(PTW32_CDECL *tloc__allocation_thread)(void*);
+#endif
 #include <unistd.h>
 #define tloc_sleep(seconds) sleep(seconds)
 #endif
@@ -26,7 +33,6 @@
 
 //Debugging and validation
 typedef void(*tloc__block_output)(void* ptr, size_t size, int used, void* user, int is_final_output);
-typedef void *(PTW32_CDECL *tloc__allocation_thread)(void*);
 
 typedef struct tloc_random {
 	unsigned long long seeds[2];
@@ -661,6 +667,7 @@ typedef struct tloc_thread_test {
 	tloc_index memory_index;
 } tloc_thread_test;
 
+#ifdef TLOC_THREAD_SAFE
 struct tloc_memory_threads {
 	void *memory[9];
 	volatile tloc_thread_access access;
@@ -668,7 +675,6 @@ struct tloc_memory_threads {
 
 struct tloc_memory_threads thread_memory;
 
-#ifdef TLOC_THREAD_SAFE
 // Function that will be executed by the thread
 void *AllocationWorker(void *arg) {
 	tloc_thread_test *thread_test = (tloc_thread_test*)arg;

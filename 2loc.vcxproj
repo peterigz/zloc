@@ -168,7 +168,6 @@
   <ItemGroup>
     <ClCompile Include="2loc.h" />
     <ClCompile Include="tests.c" />
-    <ClCompile Include="validators.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="header.h" />

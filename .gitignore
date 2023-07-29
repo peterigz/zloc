@@ -415,3 +415,5 @@ FodyWeavers.xsd
 *.plist
 *.xcuserstate
 *.plist
+*.vcxproj
+*.filters

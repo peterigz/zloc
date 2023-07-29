@@ -32,8 +32,5 @@
     <ClCompile Include="tests.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="validators.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
 </Project>
