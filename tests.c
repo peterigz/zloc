@@ -6,7 +6,7 @@
 #if !defined(TLOC_DEV_MODE)
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
-#define TLOC_OUTPUT_ERROR_MESSAGES
+//#define TLOC_OUTPUT_ERROR_MESSAGES
 #define TLOC_THREAD_SAFE
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
@@ -22,6 +22,10 @@
 #define tloc_free_memory(memory) if(memory) free(memory);
 #define TWO63 0x8000000000000000u 
 #define TWO64f (TWO63*2.0)
+
+//Debugging and validation
+typedef void(*tloc__block_output)(void* ptr, size_t size, int used, void* user, int is_final_output);
+typedef void *(PTW32_CDECL *tloc__allocation_thread)(void*);
 
 typedef struct tloc_random {
 	unsigned long long seeds[2];
@@ -592,7 +596,7 @@ int TestRemovingExtraPool(tloc_uint iterations, tloc_size pool_size, tloc_size m
 			allocations[i] = tloc_Allocate(allocator, allocation_size);
 			if (!allocations[i]) {
 				void *extra_memory = malloc(pool_size);
-				extra_pool = tloc_AddPool(allocator, extra_memory, pool_size, pool_size);
+				extra_pool = tloc_AddPool(allocator, extra_memory, pool_size);
 				allocations[i] = tloc_Allocate(allocator, allocation_size);
 				break;
 			}
@@ -651,7 +655,15 @@ typedef struct tloc_thread_test {
 	tloc_size pool_size;
 	tloc_size min_allocation_size;
 	tloc_size max_allocation_size;
+	tloc_index memory_index;
 } tloc_thread_test;
+
+struct tloc_memory_threads {
+	void *memory[9];
+	volatile tloc_thread_access access;
+};
+
+struct tloc_memory_threads thread_memory;
 
 #ifdef TLOC_THREAD_SAFE
 // Function that will be executed by the thread
@@ -659,9 +671,6 @@ void *AllocationWorker(void *arg) {
 	tloc_thread_test *thread_test = (tloc_thread_test*)arg;
 	for (int i = 0; i != thread_test->iterations; ++i) {
 		int index = rand() % 100;
-		if (i == 18) {
-			int d = 0;
-		}
 		if (thread_test->allocations[index]) {
 			tloc_Free(thread_test->allocator, thread_test->allocations[index]);
 			thread_test->allocations[index] = 0;
@@ -678,13 +687,55 @@ void *AllocationWorker(void *arg) {
 	return 0;
 }
 
-int TestMultithreading(tloc_uint iterations, tloc_size pool_size, tloc_size min_allocation_size, tloc_size max_allocation_size, int thread_count, tloc_random *random) {
+void *AllocationWorkerAddPool(void *arg) {
+	tloc_thread_test *thread_test = (tloc_thread_test*)arg;
+	for (int i = 0; i != thread_test->iterations; ++i) {
+		int index = rand() % 100;
+		if (thread_test->allocations[index]) {
+			tloc_Free(thread_test->allocator, thread_test->allocations[index]);
+			thread_test->allocations[index] = 0;
+		}
+		else {
+			tloc_size allocation_size = (tloc_size)_tloc_random_range(thread_test->random, thread_test->max_allocation_size - thread_test->min_allocation_size) + thread_test->min_allocation_size;
+			thread_test->allocations[index] = tloc_Allocate(thread_test->allocator, allocation_size);
+			if (thread_test->allocations[index]) {
+				//Do a memset set to test if we're overwriting block headers
+				memset(thread_test->allocations[index], 7, allocation_size);
+			}
+			else if (thread_memory.memory[thread_test->memory_index] == 0) {
+				//We ran out of memory, add a new pool
+				tloc_thread_access original_access = thread_memory.access;
+				tloc_thread_access access = tloc__compare_and_exchange(&thread_memory.access, 1, original_access);
+				if (original_access == access) {
+					tloc_index index = thread_test->memory_index;
+					thread_memory.memory[index] = malloc(thread_test->pool_size);
+					tloc_AddPool(thread_test->allocator, thread_memory.memory[index], thread_test->pool_size);
+					printf("\033[34mThread %i added pool\033[0m\n", index);
+					thread_test->allocations[index] = tloc_Allocate(thread_test->allocator, allocation_size);
+					thread_memory.access = 0;
+				}
+				else {
+					do {} while (thread_memory.access == 1);
+					thread_test->allocations[index] = tloc_Allocate(thread_test->allocator, allocation_size);
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+int TestMultithreading(tloc__allocation_thread callback, tloc_uint iterations, tloc_size pool_size, tloc_size min_allocation_size, tloc_size max_allocation_size, int thread_count, tloc_random *random) {
 	int result = 1;
-	void* memory = malloc(pool_size);
+
+	thread_memory.memory[0] = malloc(pool_size);
 	tloc_thread_test thread[8];
-	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, pool_size, pool_size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(thread_memory.memory[0], pool_size, pool_size);
 	if (!allocator) {
 		return 0;
+	}
+
+	for (int i = 0; i != 9; ++i) {
+		thread_memory.memory[i] = 0;
 	}
 
 	for (int i = 0; i != thread_count; ++i) {
@@ -695,12 +746,13 @@ int TestMultithreading(tloc_uint iterations, tloc_size pool_size, tloc_size min_
 		thread[i].iterations = iterations;
 		thread[i].pool_size = pool_size;
 		thread[i].random = random;
+		thread[i].memory_index = i + 1;
 	}
 
 	pthread_t allocator_thread_id[8];
 
 	for (int i = 0; i != thread_count; ++i) {
-		if (pthread_create(&allocator_thread_id[i], NULL, AllocationWorker, (void *)&thread[i]) != 0) {
+		if (pthread_create(&allocator_thread_id[i], NULL, callback, (void *)&thread[i]) != 0) {
 			return 0;
 		}
 	}
@@ -711,7 +763,11 @@ int TestMultithreading(tloc_uint iterations, tloc_size pool_size, tloc_size min_
 		}
 	}
 
-	tloc_free_memory(memory);
+	tloc_index index = 0;
+	while (thread_memory.memory[index]) {
+		tloc_free_memory(thread_memory.memory[index]);
+		index++;
+	}
 
 	return 1;
 }
@@ -728,18 +784,18 @@ int main() {
 	size_t size_of_size = sizeof(tloc_size);
 
 #if defined(TLOC_THREAD_SAFE)
-	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 2, &random));
-	PrintTestResult("Test: Multithreading test, 4 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 4, &random));
-	PrintTestResult("Test: Multithreading test, 8 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 8, &random));
-	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-1mb in a 256MB pool", TestMultithreading(1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(1), 2, &random));
-	PrintTestResult("Test: Multithreading test, 4 workers, 1000 iterations of allocating and freeing 16b-1mb in a 256MB pool", TestMultithreading(1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(1), 4, &random));
-	PrintTestResult("Test: Multithreading test, 8 workers, 1000 iterations of allocating and freeing 16b-1mb in a 256MB pool", TestMultithreading(1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(1), 8, &random));
-	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-2mb in a 512MB pool", TestMultithreading(1000, tloc__MEGABYTE(512), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(2), 2, &random));
-	PrintTestResult("Test: Multithreading test, 4 workers, 1000 iterations of allocating and freeing 16b-2mb in a 512MB pool", TestMultithreading(1000, tloc__MEGABYTE(512), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(2), 4, &random));
-	PrintTestResult("Test: Multithreading test, 8 workers, 1000 iterations of allocating and freeing 16b-2mb in a 512MB pool", TestMultithreading(1000, tloc__MEGABYTE(512), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(2), 8, &random));
-	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-10mb in a 512MB pool", TestMultithreading(1000, tloc__MEGABYTE(512), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(10), 2, &random));
-	PrintTestResult("Test: Multithreading test, 4 workers, 1000 iterations of allocating and freeing 16b-10mb in a 512MB pool", TestMultithreading(1000, tloc__MEGABYTE(512), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(10), 4, &random));
-	PrintTestResult("Test: Multithreading test, 8 workers, 1000 iterations of allocating and freeing 16b-10mb in a 512MB pool", TestMultithreading(1000, tloc__MEGABYTE(512), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(10), 8, &random));
+	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 2, &random));
+	PrintTestResult("Test: Multithreading test, 4 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 4, &random));
+	PrintTestResult("Test: Multithreading test, 8 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 8, &random));
+	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-1mb in a 256MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(1), 2, &random));
+	PrintTestResult("Test: Multithreading test, 4 workers, 1000 iterations of allocating and freeing 16b-1mb in a 256MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(1), 4, &random));
+	PrintTestResult("Test: Multithreading test, 8 workers, 1000 iterations of allocating and freeing 16b-1mb in a 256MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(1), 8, &random));
+	PrintTestResult("Test: Multithreading test, 2 workers add pool if needed, 1000 iterations of allocating and freeing 16b-2mb in a 256MB pools", TestMultithreading(AllocationWorkerAddPool, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(2), 2, &random));
+	PrintTestResult("Test: Multithreading test, 4 workers add pool if needed, 1000 iterations of allocating and freeing 16b-2mb in a 256MB pools", TestMultithreading(AllocationWorkerAddPool, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(2), 4, &random));
+	PrintTestResult("Test: Multithreading test, 8 workers add pool if needed, 1000 iterations of allocating and freeing 16b-2mb in a 256MB pools", TestMultithreading(AllocationWorkerAddPool, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(2), 8, &random));
+	PrintTestResult("Test: Multithreading test, 2 workers add pool if needed, 1000 iterations of allocating and freeing 16b-10mb in a 256MB pools", TestMultithreading(AllocationWorkerAddPool, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(10), 2, &random));
+	PrintTestResult("Test: Multithreading test, 4 workers add pool if needed, 1000 iterations of allocating and freeing 16b-10mb in a 256MB pools", TestMultithreading(AllocationWorkerAddPool, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(10), 4, &random));
+	PrintTestResult("Test: Multithreading test, 8 workers add pool if needed, 1000 iterations of allocating and freeing 16b-10mb in a 256MB pools", TestMultithreading(AllocationWorkerAddPool, 1000, tloc__MEGABYTE(256), tloc__MINIMUM_BLOCK_SIZE, tloc__MEGABYTE(10), 8, &random));
 #endif
 	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 16b - 256kb", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), &random));
 	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 2MB - 10MB", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(2), tloc__MEGABYTE(10), &random));
@@ -756,12 +812,12 @@ int main() {
 	//PrintTestResult("Test: Try to free an invalid allocation address", TestFreeingAnInvalidAllocation());
 	//PrintTestResult("Test: Detect memory corruption by writing outside of bounds of an allocation (after)", TestMemoryCorruptionDetection());
 	//PrintTestResult("Test: Detect memory corruption by writing outside of bounds of an allocation (before)", TestMemoryCorruptionDetection2());
-	PrintTestResult("Test: Many random allocations and frees: 1000 iterations, 128MB pool size, max allocation: 16b - 256kb", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), &random));
-	PrintTestResult("Test: Many random allocations and frees: 1000 iterations, 128MB pool size, max allocation: 64kb - 1MB", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), 64 * 1024, tloc__MEGABYTE(1), &random));
-	PrintTestResult("Test: Many random allocations and frees: 1000 iterations, 128MB pool size, max allocation: 1MB - 2MB", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(1), tloc__MEGABYTE(2), &random));
-	PrintTestResult("Test: Many random allocations and frees: 1000 iterations, 128MB pool size, max allocation: 2MB - 10MB", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(2), tloc__MEGABYTE(10), &random));
-	PrintTestResult("Test: Many random allocations and frees: 1000 iterations, 1GB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, tloc__GIGABYTE(1), tloc__KILOBYTE(256), tloc__MEGABYTE(50), &random));
-	PrintTestResult("Test: Many random allocations and frees: 1000 iterations, 512MB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, tloc__MEGABYTE(512), tloc__KILOBYTE(256), tloc__MEGABYTE(25), &random));
+	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 16b - 256kb", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), &random));
+	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 64kb - 1MB", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), 64 * 1024, tloc__MEGABYTE(1), &random));
+	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 1MB - 2MB", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(1), tloc__MEGABYTE(2), &random));
+	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 2MB - 10MB", TestManyAllocationsAndFreesAddPools(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(2), tloc__MEGABYTE(10), &random));
+	PrintTestResult("Test: Many random allocations and frees, go oom: 1000 iterations, 1GB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, tloc__GIGABYTE(1), tloc__KILOBYTE(256), tloc__MEGABYTE(50), &random));
+	PrintTestResult("Test: Many random allocations and frees, go oom: 1000 iterations, 512MB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, tloc__MEGABYTE(512), tloc__KILOBYTE(256), tloc__MEGABYTE(25), &random));
 	//PrintTestResult("Test: Allocations until full, then free and allocate randomly for 10000 iterations, 128MB pool size, max allocation: 128kb - 10MB", TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(1000, tloc__MEGABYTE(128), tloc__KILOBYTE(128), tloc__MEGABYTE(10), &random));
 #if defined(tloc__64BIT)
 	PrintTestResult("Test: Create a large (>4gb) memory pool, and allocate half of it", TestAllocation64bit());

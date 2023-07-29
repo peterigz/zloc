@@ -357,9 +357,6 @@ TLOC_API tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool);
 
 //--End of user functions
 
-//Debugging and validation
-typedef void(*tloc__block_output)(void* ptr, size_t size, int used, void* user, int is_final_output);
-
 //Private inline functions, user doesn't need to call these
 
 static inline void tloc__map(tloc_size size, tloc_index *fli, tloc_index *sli) {
@@ -734,7 +731,7 @@ tloc_size tloc_AllocatorSize(tloc_allocator *allocator) {
 	return allocator->list_counts >> 16;
 }
 
-void *tloc_GetPool(tloc_allocator *allocator) {
+tloc_pool *tloc_GetPool(tloc_allocator *allocator) {
 	return (void*)((char*)allocator + tloc_AllocatorSize(allocator));
 }
 
