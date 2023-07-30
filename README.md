@@ -116,4 +116,4 @@ Define *TLOC_OUTPUT_ERROR_MESSAGES* to switch on logging errors to the console f
 
 Define *TLOC_MAX_SIZE_INDEX* to alter the maximum block size the allocator can handle. Default in 64bit is ~34GB. The size is determined by 1 << TLOC_MAX_SIZE_INDEX or 2 ^ TLOC_MAX_SIZE_INDEX. Any value below 64 is acceptable. You can reduce the number to save some space in the allocator structure but it really won't save much.
 
-Define *TLOC_OUTPUT_ERROR_MESSAGES* to have any errors output to the console. This includes warnings like out of memory in the allocated (not system memory).
+Define *TLOC_OUTPUT_ERROR_MESSAGES* to have any errors output to the console. This includes warnings like out of memory in the allocator (not system memory).
