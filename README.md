@@ -35,7 +35,7 @@ The interface is very straightforward. Simply allocate a block of memory that yo
 
 ```tloc_InitialiseAllocator(void *memory_pointer);```
 
-This initialises an allocator without a pool so it just sets up the necessary allocator data structure to manage all the blocks that are allocated. The memory pointer must pointer to memory that is of size tloc_AllocatorSize() or sizeof(tloc_allocator).
+This initialises an allocator without a pool so it just sets up the necessary allocator data structure to manage all the blocks that are allocated. The memory pointer must point to memory that is of size tloc_AllocatorSize() or sizeof(tloc_allocator).
 
 ```tloc_AddPool(tloc_allocator *allocator, void *memory_pointer, tloc_size size_of_memory);```
 
@@ -45,7 +45,7 @@ Takes an allocator that you initiliased already and adds a pool of memory to it 
 
 This will set up an allocator and add a memory pool to it at the same time for convenience. The allocator structure will sit at the start of the memory you pass to the function. The size you pass must be the same size as the memory you pass. The remaining space after the allocator struct in the memory will be used as the pool.
 
-```tloc_Allocator(tloc_allocator *allocator, tloc_size size);```
+```tloc_Allocate(tloc_allocator *allocator, tloc_size size);```
 
 Allocate a block of memory using the allocator you pass to the function. The allocator will search the free blocks and split the nearest sized block requested and return a pointer to the allocation or 0 if the allocator found no suitable free blocks.
 
