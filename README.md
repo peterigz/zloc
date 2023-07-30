@@ -82,11 +82,12 @@ free(memory);
 
 ```
 //Add a pool separately
-void *memory = malloc(tloc_AllocatorSize);
-tloc_allocator *allocator = tloc_InitialiseAllocator(memory);
+tloc_allocator *allocator = (tloc_allocator*)malloc(tloc_AllocatorSize());
+allocator = tloc_InitialiseAllocator(allocator);
 assert(allocator); Something went wrong, unable to initialise the allocator
 tloc_size size = 1024 * 1024 * 128;	//128MB
-tloc_pool *pool = tloc_AddPool(allocator, size);
+void *memory = malloc(size);
+tloc_pool *pool = tloc_AddPool(memory, size);
 
 int *int_allocation = tloc_Allocate(allocator, sizeof(int) * 100);
 if(int_allocation) {
@@ -102,6 +103,7 @@ if(int_allocation) {
 	//Unable to allocate
 }
 free(memory);
+free((void*)allocator);
 ```
 
 You can also take a look at the tests.c file for more examples of usage. If you want to run threaded tests on windows then you'll need to grab pthred for windows and add pthread.h and the dll or static lib to your compile.
