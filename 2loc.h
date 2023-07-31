@@ -332,7 +332,7 @@ TLOC_API tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_s
 
 	@returns tloc_size				The struct size of the allocator in bytes
 */
-TLOC_API tloc_size tloc_AllocatorSize();
+TLOC_API tloc_size tloc_AllocatorSize(void);
 
 /*
 	If you initialised an allocator with a pool then you can use this function to get a pointer to the start of the pool. It won't get a pointer
@@ -705,7 +705,7 @@ tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size) {
 	return allocator;
 }
 
-tloc_size tloc_AllocatorSize() {
+tloc_size tloc_AllocatorSize(void) {
 	return sizeof(tloc_allocator);
 }
 

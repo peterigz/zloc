@@ -182,7 +182,7 @@ int TestPoolTooSmall() {
 }
 
 //Test if trying to free an invalid memory block fails gracefully
-int TestFreeingAnInvalidAllocation() {
+int TestFreeingAnInvalidAllocation(void) {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1));
@@ -199,7 +199,7 @@ int TestFreeingAnInvalidAllocation() {
 }
 
 //Write outside the bounds of an allocation
-int TestMemoryCorruptionDetection() {
+int TestMemoryCorruptionDetection(void) {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1));
@@ -218,7 +218,7 @@ int TestMemoryCorruptionDetection() {
 }
 
 //Write outside the bounds of an allocation
-int TestMemoryCorruptionDetection2() {
+int TestMemoryCorruptionDetection2(void) {
 	int result = 0;
 	void *memory = malloc(tloc__MEGABYTE(1));
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, tloc__MEGABYTE(1));
@@ -236,7 +236,7 @@ int TestMemoryCorruptionDetection2() {
 	return result;
 }
 
-int TestNonAlignedMemoryPool() {
+int TestNonAlignedMemoryPool(void) {
 	void *memory = malloc(1023);
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, 1023);
 	if (!allocator) {
@@ -247,7 +247,7 @@ int TestNonAlignedMemoryPool() {
 	return 0;
 }
 
-int TestAllocateSingleOverAllocate() {
+int TestAllocateSingleOverAllocate(void) {
 	tloc_size size = tloc__MEGABYTE(2);
 	int result = 1;
 	void *memory = malloc(size);
@@ -265,7 +265,7 @@ int TestAllocateSingleOverAllocate() {
 	return result;
 }
 
-int TestAllocateMultiOverAllocate() {
+int TestAllocateMultiOverAllocate(void) {
 	tloc_size size = tloc__MEGABYTE(2);
 	int result = 1;
 	void *memory = malloc(size);
@@ -291,7 +291,7 @@ int TestAllocateMultiOverAllocate() {
 }
 
 //This tests that free blocks in the segregated list will be exhausted first before using the main pool for allocations
-int TestAllocateFreeSameSizeBlocks() {
+int TestAllocateFreeSameSizeBlocks(void) {
 	tloc_size size = tloc__MEGABYTE(16);
 	int result = 1;
 	void *memory = malloc(size);
@@ -339,7 +339,7 @@ int TestAllocateFreeSameSizeBlocks() {
 }
 
 //Test allocating some memory that is too small
-int TestAllocationTooSmall() {
+int TestAllocationTooSmall(void) {
 	tloc_size size = tloc__MEGABYTE(2);
 	int result = 1;
 	void *memory = malloc(size);
@@ -637,7 +637,7 @@ int TestRemovingExtraPool(tloc_uint iterations, tloc_size pool_size, tloc_size m
 //64bit tests
 #if defined(tloc__64BIT)
 //Allocate a large block
-int TestAllocation64bit() {
+int TestAllocation64bit(void) {
 	tloc_size size = (1024ull * 1024ull * 1024ull * 6ull);	//6 gb
 	int result = 1;
 	void* memory = malloc(size);
