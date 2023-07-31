@@ -207,8 +207,7 @@ typedef struct tloc_header {
 
 typedef struct tloc_allocator {
 	/*	This is basically a terminator block that blocks can point to if they're at the end
-		of a list. A list could be blocks in a size class of the segregate list or the 
-		physical chain of blocks.	*/
+		of a free list. */
 	tloc_header end_block;
 #if defined(TLOC_THREAD_SAFE)
 	/* Multithreading protection*/
@@ -216,8 +215,9 @@ typedef struct tloc_allocator {
 	volatile tloc_thread_access access_override;
 #endif
 	/*	Here we store all of the free block data. first_level_bitmap is either a 32bit int
-	or 64bit depending on the mode you're in. second_level_bitmaps are an array of 32bit
-	ints. segregated_lists is a two level array pointing to free blocks. */
+	or 64bit depending on whether tloc__64BIT is set. Second_level_bitmaps are an array of 32bit
+	ints. segregated_lists is a two level array pointing to free blocks or end_block if the list
+	is empty. */
 	tloc_fl_bitmap first_level_bitmap;
 	tloc_sl_bitmap second_level_bitmaps[tloc__FIRST_LEVEL_INDEX_COUNT];
 	tloc_header *segregated_lists[tloc__FIRST_LEVEL_INDEX_COUNT][tloc__SECOND_LEVEL_INDEX_COUNT];
@@ -351,6 +351,17 @@ TLOC_API tloc_pool *tloc_GetPool(tloc_allocator *allocator);
 									no free memory. If that happens then you may want to add a pool at that point.
 */
 TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
+
+/*
+	Try to reallocate an existing memory block within the allocator. If possible the current block will be merged with the physical neigbouring
+	block, otherwise a normal tloc_Allocate will take place and the data copied over to the new allocation.
+
+	@param	tloc_size				The size of the memory you're passing
+	@param	void*					A ptr to the current memory you're reallocating
+	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to
+									no free memory. If that happens then you may want to add a pool at that point.
+*/
+TLOC_API void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size);
 
 /*
 	Free an allocation from a tloc_allocator. When freeing a block of memory any adjacent free blocks are merged together to keep on top of 
