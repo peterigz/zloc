@@ -869,7 +869,9 @@ void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size) {
 	tloc_size adjusted_size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
 	tloc_size combined_size = current_size + tloc__block_size(next_block);
 	if ((!tloc__next_block_is_free(block) || adjusted_size > combined_size) && adjusted_size > current_size) {
+#if defined(TLOC_THREAD_SAFE)
 		allocator->access_override = 1;
+#endif
 		allocation = tloc_Allocate(allocator, size);
 		if (allocation) {
 			tloc_size smallest_size = tloc__Min(current_size, size);
