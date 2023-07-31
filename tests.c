@@ -348,8 +348,86 @@ int TestAllocationTooSmall(void) {
 	if (!allocator) {
 		result = 0;
 	}
-	else if (tloc_Allocate(allocator, 4)) {
+	else {
+		void *allocation = tloc_Allocate(allocator, 4);
+		if (tloc__block_size(tloc__block_from_allocation(allocation)) == tloc__MINIMUM_BLOCK_SIZE) {
+			result = 1;
+		}
+		else {
+			result = 0;
+		}
+	}
+	tloc_free_memory(memory);
+	return result;
+}
+
+int TestReAllocation(void) {
+	tloc_size size = tloc__MEGABYTE(16);
+	int result = 1;
+	void *memory = malloc(size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
+	if (!allocator) {
 		result = 0;
+	}
+	else {
+		void *allocation = tloc_Allocate(allocator, 1024);
+		if (!allocation) {
+			result = 0;
+		}
+		else {
+			allocation = tloc_Reallocate(allocator, allocation, 2048);
+			if (!allocation) {
+				result = 0;
+			}
+			else if (tloc__block_size(tloc__block_from_allocation(allocation)) != 2048) {
+				result = 0;
+			}
+		}
+	}
+	tloc_free_memory(memory);
+	return result;
+}
+
+int TestReAllocationFallbackToAllocateAndCopy(void) {
+	tloc_size size = tloc__MEGABYTE(16);
+	int result = 1;
+	void *memory = malloc(size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
+	if (!allocator) {
+		result = 0;
+	}
+	else {
+		void *allocation1 = tloc_Allocate(allocator, 1024);
+		void *allocation2 = tloc_Allocate(allocator, 1024);
+		allocation1 = tloc_Reallocate(allocator, allocation1, 2048);
+		if (!allocation1) {
+			result = 0;
+		}
+	}
+	tloc_free_memory(memory);
+	return result;
+}
+
+int TestReAllocationOfNullPtr(void) {
+	tloc_size size = tloc__MEGABYTE(16);
+	int result = 1;
+	void *memory = malloc(size);
+	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, size);
+	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
+	if (!allocator) {
+		result = 0;
+	}
+	else {
+		void *allocation = 0;
+		allocation = tloc_Reallocate(allocator, allocation, 1024);
+		if (!allocation) {
+			result = 0;
+		}
+		else {
+			result = 1;
+		}
 	}
 	tloc_free_memory(memory);
 	return result;
@@ -817,6 +895,9 @@ int main() {
 	PrintTestResult("Test: Attempt to allocate more memory than is available in one go", TestAllocateSingleOverAllocate());
 	PrintTestResult("Test: Attempt to allocate more memory than is available with multiple attempts", TestAllocateMultiOverAllocate());
 	PrintTestResult("Test: Attempt to allocate memory that is below minimum block size", TestAllocationTooSmall());
+	PrintTestResult("Test: Attempt to reallocate memory", TestReAllocation());
+	PrintTestResult("Test: Attempt to reallocate memory of null pointer (should just allocate instead)", TestReAllocationOfNullPtr());
+	PrintTestResult("Test: Attempt to reallocate where it has to fall back to allocate and copy", TestReAllocationFallbackToAllocateAndCopy());
 	PrintTestResult("Test: Multiple same size block allocations and frees", TestAllocateFreeSameSizeBlocks());
 	//PrintTestResult("Test: Try to free an invalid allocation address", TestFreeingAnInvalidAllocation());
 	//PrintTestResult("Test: Detect memory corruption by writing outside of bounds of an allocation (after)", TestMemoryCorruptionDetection());

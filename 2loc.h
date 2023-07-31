@@ -1,9 +1,7 @@
 
 /*	2Loc, a Two Level Segregated Fit memory allocator
 
-	This software is dual-licensed to the public domain and under the following
-	license: you are granted a perpetual, irrevocable license to copy, modify,
-	publish, and distribute this file as you see fit.
+	This software is dual-licensed. See bottom of file for license details.
 
 	This library is based on the following paper:
 
@@ -140,7 +138,6 @@ typedef size_t tloc_fl_bitmap;
 #define TLOC_PRINT_ERROR(message_f, ...)
 #endif
 
-#define MIN_BLOCK_SIZE 16
 #define tloc__KILOBYTE(Value) ((Value) * 1024LL)
 #define tloc__MEGABYTE(Value) (tloc__KILOBYTE(Value) * 1024LL)
 #define tloc__GIGABYTE(Value) (tloc__MEGABYTE(Value) * 1024LL)
@@ -159,9 +156,11 @@ tloc__static_assert(TLOC_MAX_SIZE_INDEX < 64);
 extern "C" {
 #endif
 
+#define tloc__MINIMUM_BLOCK_SIZE 16
+#define tloc__MAXIMUM_BLOCK_SIZE (TLOC_ONE << TLOC_MAX_SIZE_INDEX)
+
 enum tloc__constants {
 	tloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
-	tloc__MINIMUM_BLOCK_SIZE = 16,
 	tloc__MINIMUM_POOL_SIZE = tloc__MEGABYTE(1),
 	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
 	tloc__FIRST_LEVEL_INDEX_COUNT = TLOC_MAX_SIZE_INDEX,
@@ -214,6 +213,7 @@ typedef struct tloc_allocator {
 #if defined(TLOC_THREAD_SAFE)
 	/* Multithreading protection*/
 	volatile tloc_thread_access access;
+	volatile tloc_thread_access access_override;
 #endif
 	/*	Here we store all of the free block data. first_level_bitmap is either a 32bit int
 	or 64bit depending on the mode you're in. second_level_bitmaps are an array of 32bit
@@ -416,6 +416,10 @@ static inline tloc_size tloc__align_size_up(tloc_size size, tloc_index alignment
 	return size;
 }
 
+static inline tloc_size tloc__adjust_size(tloc_size size, tloc_index alignment) {
+	return tloc__Min(tloc__Max(tloc__align_size_up(size, alignment), tloc__MINIMUM_BLOCK_SIZE), tloc__MAXIMUM_BLOCK_SIZE);
+}
+
 static inline tloc_size tloc__block_size(const tloc_header *block) {
 	return block->size & ~(tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);;
 }
@@ -462,11 +466,15 @@ static inline tloc_index tloc__find_next_size_up(tloc_fl_bitmap map, tloc_uint s
 #if defined(TLOC_THREAD_SAFE)
 
 static inline void tloc__lock_thread_access(tloc_allocator *allocator) {
+	if (allocator->access == 1 && allocator->access_override == 1) {
+		return;
+	}
 	do {
 	} while (0 != tloc__compare_and_exchange(&allocator->access, 1, 0));
 }
 
 static inline void tloc__unlock_thread_access(tloc_allocator *allocator) {
+	allocator->access_override = 0;
 	allocator->access = 0;
 }
 
@@ -486,7 +494,7 @@ static inline void tloc__zero_block(tloc_header *block) {
 	block->size = 0;
 }
 
-static inline void tloc__mark_block_as_used(tloc_allocator *allocator, tloc_header *block) {
+static inline void tloc__mark_block_as_used(tloc_header *block) {
 	block->size &= ~tloc__BLOCK_IS_FREE;
 	tloc_header *next_block = tloc__next_physical_block(block);
 	next_block->size &= ~tloc__PREV_BLOCK_IS_FREE;
@@ -565,7 +573,7 @@ static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index
 			allocator->first_level_bitmap &= ~(TLOC_ONE << fli);
 		}
 	}
-	tloc__mark_block_as_used(allocator, block);
+	tloc__mark_block_as_used(block);
 	return block;
 }
 
@@ -592,7 +600,7 @@ static inline void tloc__remove_block_from_segregated_list(tloc_allocator *alloc
 			}
 		}
 	}
-	tloc__mark_block_as_used(allocator, block);
+	tloc__mark_block_as_used(block);
 }
 
 /*
@@ -642,7 +650,7 @@ static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator
 */
 static inline void tloc__merge_with_next_block(tloc_allocator *allocator, tloc_header *block) {
 	tloc_header *next_block = tloc__next_physical_block(block);
-	TLOC_ASSERT(next_block->prev_physical_block == block);	//could be potentional memory corruption. Check that you're not write outside the boundary of the block size
+	TLOC_ASSERT(next_block->prev_physical_block == block);	//could be potentional memory corruption. Check that you're not writing outside the boundary of the block size
 	TLOC_ASSERT(!tloc__is_last_block_in_pool(next_block));
 	tloc__remove_block_from_segregated_list(allocator, next_block);
 	tloc__set_block_size(block, tloc__block_size(next_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
@@ -775,15 +783,7 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 #endif
 	tloc_index fli;
 	tloc_index sli;
-	size = tloc__align_size_up(size, tloc__MEMORY_ALIGNMENT);
-	if (size < tloc__MINIMUM_BLOCK_SIZE) {
-		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too small. Minimum size is %u but trying to allocate %zu bytes\n", TLOC_ERROR_NAME, tloc__MINIMUM_BLOCK_SIZE, size);
-		return NULL;
-	}
-	else if (size > (TLOC_ONE << tloc__FIRST_LEVEL_INDEX_COUNT)) {
-		TLOC_PRINT_ERROR(TLOC_ERROR_COLOR"%s: Trying to allocate a block size that is too large. The largest block size that this allocator allows is %zu bytes but trying to allocate %zu. You can define your own TLOC_MAX_SIZE_INDEX to increase before including 2loc. The max block size is calculated with 1 << TLOC_MAX_SIZE_INDEX.\n", TLOC_ERROR_NAME, (TLOC_ONE << TLOC_MAX_SIZE_INDEX), size);
-		return NULL;
-	}
+	size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
 	tloc__map(size, &fli, &sli);
 	//Note that there may well be an appropriate size block in the class but that block may not be at the head of the list
 	//In this situation we could opt to loop through the list of the size class to see if there is an appropriate size but instead
@@ -829,6 +829,57 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	tloc__unlock_thread_access(allocator);
 #endif
 	return 0;
+}
+
+void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size) {
+#if defined(TLOC_THREAD_SAFE)
+	tloc__lock_thread_access(allocator);
+	TLOC_ASSERT(allocator->access != 0);
+#endif
+
+	if (ptr && size == 0) {
+#if defined(TLOC_THREAD_SAFE)
+		tloc__unlock_thread_access(allocator);
+#endif
+		tloc_Free(allocator, ptr);
+	}
+
+	if (!ptr) {
+#if defined(TLOC_THREAD_SAFE)
+		tloc__unlock_thread_access(allocator);
+#endif
+		return tloc_Allocate(allocator, size);
+	}
+
+	tloc_header *block = tloc__block_from_allocation(ptr);
+	tloc_header *next_block = tloc__next_physical_block(block);
+	void *allocation = 0;
+	tloc_size current_size = tloc__block_size(block);
+	tloc_size adjusted_size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
+	tloc_size combined_size = current_size + tloc__block_size(next_block);
+	if ((!tloc__next_block_is_free(block) || adjusted_size > combined_size) && adjusted_size > current_size) {
+		allocator->access_override = 1;
+		allocation = tloc_Allocate(allocator, size);
+		if (allocation) {
+			tloc_size smallest_size = tloc__Min(current_size, size);
+			memcpy(allocation, ptr, smallest_size);
+			tloc_Free(allocator, ptr);
+		}
+	}
+	else {
+		//Reallocation is possible
+		if (adjusted_size > current_size)
+		{
+			tloc__merge_with_next_block(allocator, block);
+			tloc__mark_block_as_used(block);
+		}
+		allocation = tloc__maybe_split_block(allocator, block, adjusted_size);
+	}
+
+#if defined(TLOC_THREAD_SAFE)
+	tloc__unlock_thread_access(allocator);
+#endif
+	return allocation;
 }
 
 int tloc_Free(tloc_allocator *allocator, void* allocation) {
