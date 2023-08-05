@@ -241,6 +241,7 @@ typedef struct tloc_allocator {
 #define tloc__do_add_pool_callback allocator->add_pool_callback(allocator->user_data, block)
 #define tloc__do_adjust_size_callback allocator->adjust_size_callback(size, tloc__MEMORY_ALIGNMENT)
 #define tloc__block_extension_size allocator->block_extension_size
+#define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, remote_size) 
 #else
 #define tloc__do_size_class_callback tloc__block_size(block)
 #define tloc__do_merge_next_callback
@@ -249,6 +250,7 @@ typedef struct tloc_allocator {
 #define tloc__do_add_pool_callback
 #define tloc__do_adjust_size_callback tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT)
 #define tloc__block_extension_size 0
+#define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, 0) 
 #endif
 
 #if defined (_MSC_VER) && (_MSC_VER >= 1400) && (defined (_M_IX86) || defined (_M_X64))
@@ -869,15 +871,17 @@ tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool) {
 }
 
 #if defined(TLOC_ENABLE_REMOTE_MEMORY)
+#define tloc__map_size remote_size ? remote_size : size
 void *tloc__allocate(tloc_allocator *allocator, tloc_size size, tloc_size remote_size) {
 #else
 void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
+#define tloc__map_size size
 #endif
 	tloc__lock_thread_access;
 	tloc_index fli;
 	tloc_index sli;
 	size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
-	tloc__map(remote_size ? remote_size : size, &fli, &sli);
+	tloc__map(tloc__map_size, &fli, &sli);
 	//Note that there may well be an appropriate size block in the class but that block may not be at the head of the list
 	//In this situation we could opt to loop through the list of the size class to see if there is an appropriate size but instead
 	//we stick to the paper and just move on to the next class up to keep a O1 speed at the cost of some extra fragmentation
@@ -898,7 +902,7 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 			sli = tloc__scan_forward(allocator->second_level_bitmaps[fli]);
 			tloc_header *block = tloc__pop_block(allocator, fli, sli);
 			TLOC_ASSERT(tloc__block_size(block) > size);
-			void *allocation = tloc__maybe_split_block(allocator, block, size, remote_size);
+			void *allocation = tloc__call_maybe_split_block;
 			tloc__unlock_thread_access;
 			return allocation;
 		}
@@ -906,7 +910,7 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	else {
 		tloc_header *block = tloc__pop_block(allocator, fli, sli);
 		TLOC_ASSERT(tloc__block_size(block) > size);
-		void *allocation = tloc__maybe_split_block(allocator, block, size, remote_size);
+		void *allocation = tloc__call_maybe_split_block;
 		tloc__unlock_thread_access;
 		return allocation;
 	}

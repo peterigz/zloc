@@ -878,6 +878,7 @@ int TestMultithreading(tloc__allocation_thread callback, tloc_uint iterations, t
 }
 #endif
 
+#ifdef TLOC_ENABLE_REMOTE_MEMORY
 //Test remote pools
 typedef struct remote_memory_pools {
 	void *memory_pools[8];
@@ -997,6 +998,7 @@ int TestRemoteMemoryBlockManagement() {
 	tloc_free_memory(buffer_ranges);
 	return result;
 }
+#endif
 
 int main() {
 
@@ -1008,8 +1010,10 @@ int main() {
 	size_t size_of_header = sizeof(tloc_header);
 	size_t size_of_size = sizeof(tloc_size);
 
+#ifdef TLOC_ENABLE_REMOTE_MEMORY
 	TestRemoteMemoryBlockManagement();
 	return;
+#endif
 
 #if defined(TLOC_THREAD_SAFE)
 	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 2, &random));
