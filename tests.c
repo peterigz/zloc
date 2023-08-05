@@ -990,7 +990,7 @@ int TestRemoteMemoryBlockManagement() {
 		//if (buffers[i] == 0) continue;
 		//printf("%i) %zu, %zu \n", i, buffers[i]->size, buffers[i]->offset_from_pool);
 	//}
-	tloc_VerifyRemoteBlocks((char*)buffer_ranges - tloc__POINTER_SIZE, tloc__output_buffer_info, 0);
+	tloc_VerifyRemoteBlocks((tloc_header*)((char*)buffer_ranges - tloc__POINTER_SIZE), tloc__output_buffer_info, 0);
 	for (int i = 0; i != pools.pool_count; ++i) {
 		tloc_free_memory(pools.memory_pools[i]);
 	}

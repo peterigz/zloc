@@ -340,7 +340,6 @@ TLOC_API tloc_allocator *tloc_InitialiseAllocator(void *memory);
 									file to see any errors in the console.
 */
 TLOC_API tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size);
-TLOC_API void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size);
 
 /*
 	Add a new memory pool to the allocator. Pools don't have to all be the same size, adding a pool will create the biggest block it can within
@@ -383,18 +382,6 @@ TLOC_API tloc_pool *tloc_GetPool(tloc_allocator *allocator);
 TLOC_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
 
 /*
-	Allocate some memory in a remote location from the normal heap. This is generally for allocating GPU memory.
-
-	@param	tloc_allocator			A pointer to an initialised tloc_allocator
-	@param	tloc_size				The size of the memory you're passing which should be the size of the block with the information about the 
-									buffer you're creating in the remote location
-	@param	tloc_size				The remote size of the memory you're passing
-	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to
-									no free memory. If that happens then you may want to add a pool at that point.
-*/
-TLOC_API void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_size);
-
-/*
 	Try to reallocate an existing memory block within the allocator. If possible the current block will be merged with the physical neigbouring
 	block, otherwise a normal tloc_Allocate will take place and the data copied over to the new allocation.
 
@@ -418,17 +405,6 @@ TLOC_API void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size s
 TLOC_API int tloc_Free(tloc_allocator *allocator, void *allocation);
 
 /*
-	Free a remote allocation from a tloc_allocator. You must have set up merging callbacks so that you can update your block extensions with the
-	necessary buffer sizes and offsets
-
-	It's recommended to call this function with an assert: TLOC_ASSERT(tloc_Free(allocator, allocation));
-	An error is also output to console as long as TLOC_OUTPUT_ERROR_MESSAGES is defined.
-
-	@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
-*/
-TLOC_API int tloc_FreeRemote(tloc_allocator *allocator, void *allocation);
-
-/*
 	Remove a pool from an allocator. Note that all blocks in the pool must be free and therefore all merged together into one block (this happens
 	automatically as all blocks are freed are merged together into bigger blocks.
 
@@ -436,6 +412,40 @@ TLOC_API int tloc_FreeRemote(tloc_allocator *allocator, void *allocation);
 	@param tloc_allocator*			A pointer to the memory pool that you want to free. You get this pointer when you add a pool to the allocator.
 */
 TLOC_API tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool);
+
+#if defined(TLOC_ENABLE_REMOTE_MEMORY)
+/*
+	When using an allocator for managing remote memory, you need to set the size of the struct that you will be using to store information about
+	the remote block of memory. This will be like an extension the existing tloc_header.
+
+	@param tloc_allocator*			A pointer to an initialised allocator
+	@param tloc_size				The size of the block extension
+*/
+TLOC_API void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size);
+
+/*
+	Free a remote allocation from a tloc_allocator. You must have set up merging callbacks so that you can update your block extensions with the
+	necessary buffer sizes and offsets
+
+	It's recommended to call this function with an assert: TLOC_ASSERT(tloc_FreeRemote(allocator, allocation));
+	An error is also output to console as long as TLOC_OUTPUT_ERROR_MESSAGES is defined.
+
+	@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
+*/
+TLOC_API int tloc_FreeRemote(tloc_allocator *allocator, void *allocation);
+
+/*
+	Allocate some memory in a remote location from the normal heap. This is generally for allocating GPU memory.
+
+	@param	tloc_allocator			A pointer to an initialised tloc_allocator
+	@param	tloc_size				The size of the memory you're passing which should be the size of the block with the information about the
+									buffer you're creating in the remote location
+	@param	tloc_size				The remote size of the memory you're passing
+	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to
+									no free memory. If that happens then you may want to add a pool at that point.
+*/
+TLOC_API void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_size);
+#endif
 
 //--End of user functions
 
@@ -808,11 +818,6 @@ tloc_size tloc_AllocatorSize(void) {
 	return sizeof(tloc_allocator);
 }
 
-void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size) {
-	allocator->block_extension_size = size;
-	allocator->adjust_size_callback = tloc__zero_size_adjust;
-}
-
 tloc_pool *tloc_GetPool(tloc_allocator *allocator) {
 	return (void*)((char*)allocator + tloc_AllocatorSize());
 }
@@ -863,16 +868,11 @@ tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool) {
 	return 0;
 }
 
-void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
-	return tloc__allocate(allocator, size, 0);
-}
-
-void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_size) {
-	void* allocation = tloc__allocate(allocator, 0, remote_size);
-	return (char*)allocation + tloc__MINIMUM_BLOCK_SIZE;
-}
-
+#if defined(TLOC_ENABLE_REMOTE_MEMORY)
 void *tloc__allocate(tloc_allocator *allocator, tloc_size size, tloc_size remote_size) {
+#else
+void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
+#endif
 	tloc__lock_thread_access;
 	tloc_index fli;
 	tloc_index sli;
@@ -958,11 +958,6 @@ void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size) {
 	return allocation;
 }
 
-int tloc_FreeRemote(tloc_allocator *allocator, void* block_extension) {
-	void *allocation = (char*)block_extension - tloc__MINIMUM_BLOCK_SIZE;
-	return tloc_Free(allocator, allocation);
-}
-
 int tloc_Free(tloc_allocator *allocator, void* allocation) {
 	TLOC_ASSERT(allocation);							//Tried to free a null pointer
 	tloc__lock_thread_access;
@@ -978,6 +973,27 @@ int tloc_Free(tloc_allocator *allocator, void* allocation) {
 	tloc__unlock_thread_access;
 	return 1;
 }
+
+#if defined(TLOC_ENABLE_REMOTE_MEMORY)
+void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
+	return tloc__allocate(allocator, size, 0);
+}
+
+void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size) {
+	allocator->block_extension_size = size;
+	allocator->adjust_size_callback = tloc__zero_size_adjust;
+}
+
+void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_size) {
+	void* allocation = tloc__allocate(allocator, 0, remote_size);
+	return (char*)allocation + tloc__MINIMUM_BLOCK_SIZE;
+}
+
+int tloc_FreeRemote(tloc_allocator *allocator, void* block_extension) {
+	void *allocation = (char*)block_extension - tloc__MINIMUM_BLOCK_SIZE;
+	return tloc_Free(allocator, allocation);
+}
+#endif
 
 //--- End Debugging tools
 #endif
