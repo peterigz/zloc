@@ -8,7 +8,7 @@
 #define TLOC_IMPLEMENTATION
 //#define TLOC_OUTPUT_ERROR_MESSAGES
 #define TLOC_THREAD_SAFE
-//#define TLOC_ENABLE_REMOTE_MEMORY
+#define TLOC_ENABLE_REMOTE_MEMORY
 #define TLOC_MAX_SIZE_INDEX 35		//max block size 34GB
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
@@ -880,6 +880,7 @@ int TestMultithreading(tloc__allocation_thread callback, tloc_uint iterations, t
 //Test remote pools
 typedef struct remote_memory_pools {
 	void *memory_pools[8];
+	void *range_pools[8];
 	tloc_size pool_sizes[8];
 	tloc_uint pool_count;
 } remote_memory_pools;
@@ -897,8 +898,7 @@ tloc_size get_remote_size(tloc_header *block) {
 void on_add_pool(void *user_data, void *block) {
 	remote_memory_pools *pools = (remote_memory_pools*)user_data;
 	remote_buffer *buffer = (remote_buffer*)block;
-	assert(pools->pool_count > 0);
-	buffer->size = pools->pool_sizes[pools->pool_count - 1];
+	buffer->size = pools->pool_sizes[pools->pool_count++];
 	buffer->offset_from_pool = 0;
 }
 
@@ -945,11 +945,11 @@ int TestRemoteMemoryBlockManagement(tloc_uint iterations, tloc_size pool_size, t
 	int result = 1;
 	remote_memory_pools pools;
 	pools.pool_sizes[0] = pool_size;
-	pools.pool_count = 1;
+	pools.pool_count = 0;
 	tloc_allocator *allocator;
 	tloc_size size = tloc_CalculateRemoteBlockPoolSize(sizeof(remote_buffer), 128);
-	void *allocator_memory = malloc(size);
-	allocator = tloc_InitialiseAllocatorForRemote(allocator_memory, size);
+	void *allocator_memory = malloc(tloc_AllocatorSize());
+	allocator = tloc_InitialiseAllocator(allocator_memory);
 	tloc_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	allocator->bytes_per_block = pool_size / 128;
 	allocator->user_data = &pools;
@@ -958,7 +958,9 @@ int TestRemoteMemoryBlockManagement(tloc_uint iterations, tloc_size pool_size, t
 	allocator->split_block_callback = on_split_block;
 	allocator->merge_next_callback = on_merge_next;
 	allocator->merge_prev_callback = on_merge_prev;
-	tloc_AddRemotePool(allocator, pools.pool_sizes[0]);
+	tloc_size memory_sizes[4] = { tloc__MEGABYTE(1), tloc__MEGABYTE(2), tloc__MEGABYTE(3), tloc__MEGABYTE(4) };
+	pools.range_pools[pools.pool_count] = malloc(size);
+	tloc_AddRemotePool(allocator, pools.range_pools[pools.pool_count], size, pools.pool_sizes[pools.pool_count]);
 	remote_buffer *buffers[100];
 	memset(buffers, 0, sizeof(void*) * 100);
 	for (int i = 0; i != iterations; ++i) {
@@ -971,7 +973,8 @@ int TestRemoteMemoryBlockManagement(tloc_uint iterations, tloc_size pool_size, t
 			buffers[index] = 0;
 		}
 		else {
-			tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+			//tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+			tloc_size allocation_size = memory_sizes[rand() % 4];
 			//tloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
 			buffers[index] = tloc_AllocateRemote(allocator, allocation_size);
 			if (tloc_RemoteBlockLimitReached(allocator)) {
@@ -980,15 +983,20 @@ int TestRemoteMemoryBlockManagement(tloc_uint iterations, tloc_size pool_size, t
 			if (!buffers[index] && !tloc_RemoteBlockLimitReached(allocator)) {
 				//Ran out of room in the pool
 				pools.pool_sizes[pools.pool_count] = pool_size;
-				tloc_AddRemotePool(allocator, pools.pool_sizes[pools.pool_count++]);
+				pools.range_pools[pools.pool_count] = malloc(size);
+				tloc_AddRemotePool(allocator, pools.range_pools[pools.pool_count], size, pools.pool_sizes[pools.pool_count]);
 				buffers[index] = tloc_AllocateRemote(allocator, allocation_size);
 			}
 		}
 		assert(tloc_CheckForNullBlocksInList(allocator));
-		assert(tloc_VerifyRemoteBlocks(tloc__allocator_first_block(allocator), 0, 0) == tloc__OK);
+		for (int c = 0; c != pools.pool_count; ++c) {
+			assert(tloc_VerifyRemoteBlocks(tloc__first_block_in_pool(pools.range_pools[c]), 0, 0) == tloc__OK);
+		}
 	}
 	remote_buffer *test = tloc_AllocateRemote(allocator, 150000);
-	tloc_VerifyRemoteBlocks(tloc__allocator_first_block(allocator), tloc__output_buffer_info, 0);
+	for (int c = 0; c != pools.pool_count; ++c) {
+		tloc_VerifyRemoteBlocks(tloc__first_block_in_pool(pools.range_pools[c]), tloc__output_buffer_info, 0);
+	}
 	tloc_free_memory(allocator_memory);
 	return result;
 }
@@ -1005,7 +1013,7 @@ int main() {
 	size_t size_of_size = sizeof(tloc_size);
 
 #ifdef TLOC_ENABLE_REMOTE_MEMORY
-	TestRemoteMemoryBlockManagement(1000, tloc__MEGABYTE(128), tloc__KILOBYTE(256), tloc__MEGABYTE(2), &random);
+	TestRemoteMemoryBlockManagement(1000, tloc__MEGABYTE(128), tloc__MEGABYTE(2), tloc__MEGABYTE(2), &random);
 	return;
 #endif
 
