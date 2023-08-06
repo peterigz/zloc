@@ -246,6 +246,7 @@ typedef struct tloc_allocator {
 #define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, remote_size) 
 #define tloc__maybe_flag_as_no_blocks_left if(tloc__is_last_block_in_pool(tloc__next_physical_block(block)) && tloc__block_size(block) < size_plus_overhead) tloc__set_remote_block_limit_reached(allocator);
 #define tloc__maybe_block_extra_pools TLOC_ASSERT(!allocator->last_block);
+#define tloc__maybe_assert_block_size 
 #else
 #define tloc__do_size_class_callback tloc__block_size(block)
 #define tloc__do_merge_next_callback
@@ -257,6 +258,7 @@ typedef struct tloc_allocator {
 #define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, 0) 
 #define tloc__maybe_flag_as_no_blocks_left
 #define tloc__maybe_block_extra_pools
+#define tloc__maybe_assert_block_size TLOC_ASSERT(tloc__block_size(block) >= size)
 #endif
 
 #if defined (_MSC_VER) && (_MSC_VER >= 1400) && (defined (_M_IX86) || defined (_M_X64))
@@ -480,8 +482,6 @@ TLOC_API tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_size block_extension_s
 TLOC_API tloc_header *tloc_GetLastFreePhysicalBlock(tloc_allocator *allocator);
 
 TLOC_API void tloc_AddRemotePool(tloc_allocator *allocator, void *block_memory, tloc_size block_memory_size, tloc_size remote_pool_size);
-
-tloc_bool tloc_RemoteBlockLimitReached(tloc_allocator *allocator);
 
 #endif
 
@@ -940,7 +940,7 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 		if (fli > -1) {
 			sli = tloc__scan_forward(allocator->second_level_bitmaps[fli]);
 			tloc_header *block = tloc__pop_block(allocator, fli, sli);
-			TLOC_ASSERT(tloc__block_size(block) >= size);
+			tloc__maybe_assert_block_size;
 			void *allocation = tloc__call_maybe_split_block;
 			tloc__unlock_thread_access;
 			return allocation;
@@ -948,7 +948,7 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	}
 	else {
 		tloc_header *block = tloc__pop_block(allocator, fli, sli);
-		TLOC_ASSERT(tloc__block_size(block) >= size);
+		tloc__maybe_assert_block_size;
 		void *allocation = tloc__call_maybe_split_block;
 		tloc__unlock_thread_access;
 		return allocation;
@@ -1037,10 +1037,6 @@ tloc_header *tloc_GetLastFreePhysicalBlock(tloc_allocator *allocator) {
 	TLOC_ASSERT(tloc__is_free_block(block));		//There are no free blocks left to manage the remote memory.
 	return block;
 }
-
-tloc_bool tloc_RemoteBlockLimitReached(tloc_allocator *allocator) { 
-	return allocator->block_extension_size & 1; 
-};
 
 void tloc_AddRemotePool(tloc_allocator *allocator, void *block_memory, tloc_size block_memory_size, tloc_size remote_pool_size) {
 	TLOC_ASSERT(allocator->add_pool_callback);	//You must set all the necessary callbacks to handle remote memory management
