@@ -244,7 +244,6 @@ typedef struct tloc_allocator {
 #define tloc__do_adjust_size_callback allocator->adjust_size_callback(size, tloc__MEMORY_ALIGNMENT)
 #define tloc__block_extension_size (allocator->block_extension_size & ~1)
 #define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, remote_size) 
-#define tloc__maybe_flag_as_no_blocks_left if(tloc__is_last_block_in_pool(tloc__next_physical_block(block)) && tloc__block_size(block) < size_plus_overhead) tloc__set_remote_block_limit_reached(allocator);
 #define tloc__maybe_block_extra_pools TLOC_ASSERT(!allocator->last_block);
 #define tloc__maybe_assert_block_size 
 #else
@@ -256,7 +255,6 @@ typedef struct tloc_allocator {
 #define tloc__do_adjust_size_callback tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT)
 #define tloc__block_extension_size 0
 #define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, 0) 
-#define tloc__maybe_flag_as_no_blocks_left
 #define tloc__maybe_block_extra_pools
 #define tloc__maybe_assert_block_size TLOC_ASSERT(tloc__block_size(block) >= size)
 #endif
@@ -443,9 +441,23 @@ TLOC_API tloc_allocator *tloc_InitialiseAllocatorForRemote(void *memory, tloc_si
 	the remote block of memory. This will be like an extension the existing tloc_header.
 
 	@param tloc_allocator*			A pointer to an initialised allocator
-	@param tloc_size				The size of the block extension
+	@param tloc_size				The size of the block extension. Will be aligned up to tloc__MEMORY_ALIGNMENT
 */
 TLOC_API void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size);
+
+/*
+	When using an allocator for managing remote memory, you need to set the bytes per block that a block storing infomation about the remote 
+	memory allocation will manage. For example you might set the value to 1MB so if you were to then allocate 4MB of remote memory then 4 blocks
+	worth of space would be used to allocate that memory. This means that if it were to be freed and then split down to a smaller size they'd be
+	enough blocks worth of space to do this.
+
+	Note that the lower the number the more memory you need to track remote memory blocks but the more granular it will be. It will depend alot
+	on the size of allocations you will need
+
+	@param tloc_allocator*			A pointer to an initialised allocator
+	@param tloc_size				The bytes per block you want it to be set to. Must be a power of 2
+*/
+TLOC_API void tloc_SetBytesPerBlock(tloc_allocator *allocator, tloc_size size);
 
 /*
 	Free a remote allocation from a tloc_allocator. You must have set up merging callbacks so that you can update your block extensions with the
@@ -477,7 +489,7 @@ TLOC_API void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_s
 	@param	tloc_allocator			A pointer to an initialised tloc_allocator
 	@returns tloc_size				The size of the block
 */
-TLOC_API tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_size block_extension_size, tloc_uint block_count);
+TLOC_API tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_allocator *allocator, tloc_size remote_pool_size);
 
 TLOC_API tloc_header *tloc_GetLastFreePhysicalBlock(tloc_allocator *allocator);
 
@@ -500,7 +512,6 @@ static inline void tloc__null_merge_callback(void *user_data, tloc_header *block
 static inline void tloc__null_split_callback(void *user_data, tloc_header *block, tloc_header *trimmed, tloc_size remote_size) { return; }
 static inline void tloc__null_add_pool_callback(void *user_data, tloc_header *block) { return; }
 static inline tloc_size tloc__zero_size_adjust(tloc_size size, tloc_index alignment) { return 0; }
-static inline void tloc__set_remote_block_limit_reached(tloc_allocator *allocator) { allocator->block_extension_size |= 1; };
 static inline void tloc__unset_remote_block_limit_reached(tloc_allocator *allocator) { allocator->block_extension_size &= ~1; };
 #endif
 
@@ -741,8 +752,7 @@ static inline void tloc__remove_block_from_segregated_list(tloc_allocator *alloc
 static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_header *block, tloc_size size, tloc_size remote_size) {
 	TLOC_ASSERT(!tloc__is_last_block_in_pool(block));
 	tloc_size size_plus_overhead = size + tloc__BLOCK_POINTER_OFFSET + tloc__block_extension_size;
-	if (size_plus_overhead + tloc__MINIMUM_BLOCK_SIZE >= tloc__block_size(block)) {
-		tloc__maybe_flag_as_no_blocks_left;
+	if (size_plus_overhead + tloc__MINIMUM_BLOCK_SIZE >= tloc__block_size(block) - tloc__block_extension_size) {
 		return (void*)((char*)block + tloc__BLOCK_POINTER_OFFSET);
 	}
 	tloc_header *trimmed = (tloc_header*)((char*)tloc__block_user_ptr(block) + size + tloc__block_extension_size);
@@ -1023,12 +1033,21 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 }
 
 void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size) {
+	TLOC_ASSERT(allocator->block_extension_size == 0);	//You cannot change this once set
 	allocator->block_extension_size = tloc__align_size_up(size, tloc__MEMORY_ALIGNMENT);
 	allocator->adjust_size_callback = tloc__zero_size_adjust;
 }
 
-tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_size block_extension_size, tloc_uint block_count) {
-	return (sizeof(tloc_header) + block_extension_size) * block_count + tloc__BLOCK_POINTER_OFFSET;
+void tloc_SetBytesPerBlock(tloc_allocator *allocator, tloc_size size) {
+	TLOC_ASSERT(allocator->bytes_per_block == 0);		//You cannot change this once set
+	TLOC_ASSERT(tloc__is_pow2(size));					//Size must be a power of 2
+	allocator->bytes_per_block = size;
+}
+
+tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_allocator *allocator, tloc_size remote_pool_size) {
+	TLOC_ASSERT(allocator->block_extension_size);	//You must set the block extension size first
+	TLOC_ASSERT(allocator->bytes_per_block);		//You must set the number of bytes per block
+	return (sizeof(tloc_header) + allocator->block_extension_size) * (remote_pool_size / allocator->bytes_per_block) + tloc__BLOCK_POINTER_OFFSET;
 }
 
 tloc_header *tloc_GetLastFreePhysicalBlock(tloc_allocator *allocator) {
