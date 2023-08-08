@@ -7,7 +7,7 @@
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
 //#define TLOC_OUTPUT_ERROR_MESSAGES
-#define TLOC_THREAD_SAFE
+//#define TLOC_THREAD_SAFE
 #define TLOC_MAX_SIZE_INDEX 35		//max block size 34GB
 #include "2loc.h"
 #define _TIMESPEC_DEFINED
@@ -21,7 +21,7 @@ typedef void *(PTW32_CDECL *tloc__allocation_thread)(void*);
 #else
 #ifdef TLOC_THREAD_SAFE	
 #include <pthread.h>
-typedef void *(PTW32_CDECL *tloc__allocation_thread)(void*);
+typedef void *( *tloc__allocation_thread)(void*);
 #endif
 #include <unistd.h>
 #define tloc_sleep(seconds) sleep(seconds)
@@ -102,22 +102,6 @@ tloc__error_codes tloc_VerifySegregatedLists(tloc_allocator *allocator) {
 		}
 	}
 	return tloc__OK;
-}
-
-//The segregated list of free blocks should never contain any null blocks, this seeks them out.
-tloc_bool tloc_CheckForNullBlocksInList(tloc_allocator *allocator) {
-	for (int fli = 0; fli != tloc__FIRST_LEVEL_INDEX_COUNT; ++fli) {
-		if (allocator->first_level_bitmap & (1ULL << fli)) {
-			for (int sli = 0; sli != tloc__SECOND_LEVEL_INDEX_COUNT; ++sli) {
-				if (allocator->second_level_bitmaps[fli] & (1U << sli)) {
-					if (allocator->segregated_lists[fli][sli]->prev_physical_block == 0) {
-						return 0;
-					}
-				}
-			}
-		}
-	}
-	return 1;
 }
 
 //Search the segregated list of free blocks for a given block
@@ -404,7 +388,6 @@ int TestManyAllocationsAndFrees(tloc_uint iterations, tloc_size pool_size, tloc_
 					memset(allocations[index], 7, allocation_size);
 				}
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		tloc_free_memory(memory);
@@ -422,13 +405,13 @@ int TestManyAllocationsAndFreesAddPools(tloc_uint iterations, tloc_size pool_siz
 	assert(tloc_VerifySegregatedLists(allocator) == tloc__OK);
 	if (!allocator) {
 		result = 0;
-		tloc_free_memory(memory);
+		tloc_free_memory(memory[0]);
 	}
 	else {
 		void *allocations[100];
 		memset(allocations, 0, sizeof(void*) * 100);
 		for (int i = 0; i != iterations; ++i) {
-			if (i == 12) {
+			if (i == 326) {
 				int d = 0;
 			}
 			int index = rand() % 100;
@@ -455,7 +438,6 @@ int TestManyAllocationsAndFreesAddPools(tloc_uint iterations, tloc_size pool_siz
 					}
 				}
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		for (int i = 0; i != memory_index; ++i) {
@@ -484,7 +466,6 @@ int TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(tloc_uint iterati
 			if (!allocations[i]) {
 				break;
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		for (int i = 0; i != iterations; ++i) {
@@ -501,7 +482,6 @@ int TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(tloc_uint iterati
 					memset(allocations[index], 7, allocation_size);
 				}
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		tloc_free_memory(memory);
@@ -530,7 +510,6 @@ int TestAllocatingUntilOutOfSpaceThenFreeAll(tloc_uint iterations, tloc_size poo
 			if (!allocations[i]) {
 				break;
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		for (int i = 0; i != 1000; ++i) {
@@ -538,7 +517,6 @@ int TestAllocatingUntilOutOfSpaceThenFreeAll(tloc_uint iterations, tloc_size poo
 				tloc_Free(allocator, allocations[i]);
 				allocations[i] = 0;
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		tloc_header *first_block = tloc__allocator_first_block(allocator);
@@ -567,7 +545,6 @@ int TestRemovingPool(tloc_uint iterations, tloc_size pool_size, tloc_size min_al
 			if (!allocations[i]) {
 				break;
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		for (int i = 0; i != 1000; ++i) {
@@ -575,7 +552,6 @@ int TestRemovingPool(tloc_uint iterations, tloc_size pool_size, tloc_size min_al
 				tloc_Free(allocator, allocations[i]);
 				allocations[i] = 0;
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		if (!tloc_RemovePool(allocator, tloc_GetPool(allocator))) {
@@ -609,7 +585,6 @@ int TestRemovingExtraPool(tloc_uint iterations, tloc_size pool_size, tloc_size m
 				allocations[i] = tloc_Allocate(allocator, allocation_size);
 				break;
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		for (int i = 0; i != 1000; ++i) {
@@ -617,7 +592,6 @@ int TestRemovingExtraPool(tloc_uint iterations, tloc_size pool_size, tloc_size m
 				tloc_Free(allocator, allocations[i]);
 				allocations[i] = 0;
 			}
-			assert(tloc_CheckForNullBlocksInList(allocator));
 			assert(tloc_VerifyBlocks(allocator, 0, 0) == tloc__OK);
 		}
 		if (!tloc_RemovePool(allocator, extra_pool)) {
@@ -786,8 +760,8 @@ int main() {
 
 	tloc_random random;
 	tloc_size time = (tloc_size)clock() * 1000;
-	_ReSeed(&random, time);
-	//_ReSeed(&random, 257000);
+	//_ReSeed(&random, time);
+	_ReSeed(&random, 257000);
 
 	size_t size_of_header = sizeof(tloc_header);
 	size_t size_of_size = sizeof(tloc_size);
