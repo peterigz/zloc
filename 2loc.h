@@ -217,7 +217,7 @@ typedef struct tloc_allocator {
 #if defined(TLOC_ENABLE_REMOTE_MEMORY)
 	void *user_data;
 	tloc_header *last_block;
-	tloc_size(*get_block_size_callback)(tloc_header* block);
+	tloc_size(*get_block_size_callback)(const tloc_header* block);
 	void(*merge_next_callback)(void *user_data, tloc_header* block, tloc_header *next_block);
 	void(*merge_prev_callback)(void *user_data, tloc_header* prev_block, tloc_header *block);
 	void(*split_block_callback)(void *user_data, tloc_header* block, tloc_header* trimmed_block, tloc_size remote_size);
@@ -510,7 +510,7 @@ static inline void tloc__map(tloc_size size, tloc_index *fli, tloc_index *sli) {
 #if defined(TLOC_ENABLE_REMOTE_MEMORY)
 static inline void tloc__null_merge_callback(void *user_data, tloc_header *block1, tloc_header *block2) { return; }
 static inline void tloc__null_split_callback(void *user_data, tloc_header *block, tloc_header *trimmed, tloc_size remote_size) { return; }
-static inline void tloc__null_add_pool_callback(void *user_data, tloc_header *block) { return; }
+static inline void tloc__null_add_pool_callback(void *user_data, void *block) { return; }
 static inline tloc_size tloc__zero_size_adjust(tloc_size size, tloc_index alignment) { return 0; }
 static inline void tloc__unset_remote_block_limit_reached(tloc_allocator *allocator) { allocator->block_extension_size &= ~1; };
 #endif

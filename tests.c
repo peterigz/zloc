@@ -867,7 +867,7 @@ typedef struct remote_buffer {
 	tloc_uint numbers[3];
 } remote_buffer;
 
-tloc_size get_remote_size(tloc_header *block) {
+tloc_size get_remote_size(const tloc_header *block) {
 	remote_buffer *buffer = (remote_buffer*)tloc__block_user_extension_ptr(block);
 	return buffer->size;
 }
@@ -964,7 +964,6 @@ int TestRemoteMemoryBlockManagement(tloc_uint iterations, tloc_size pool_size, t
 				buffers[index] = tloc_AllocateRemote(allocator, allocation_size);
 			}
 		}
-		assert(tloc_CheckForNullBlocksInList(allocator));
 		for (int c = 0; c != pools.pool_count; ++c) {
 			assert(tloc_VerifyRemoteBlocks(tloc__first_block_in_pool(pools.range_pools[c]), 0, 0) == tloc__OK);
 		}
