@@ -1012,7 +1012,7 @@ void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size) {
 }
 
 int tloc_Free(tloc_allocator *allocator, void* allocation) {
-	TLOC_ASSERT(allocation);							//Tried to free a null pointer
+	if (!allocation) return 0;
 	tloc__lock_thread_access;
 	tloc_header *block = tloc__block_from_allocation(allocation);
 	if (tloc__prev_is_free_block(block)) {
