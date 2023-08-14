@@ -222,7 +222,7 @@ typedef struct tloc_allocator {
 	void(*merge_prev_callback)(void *user_data, tloc_header* prev_block, tloc_header *block);
 	void(*split_block_callback)(void *user_data, tloc_header* block, tloc_header* trimmed_block, tloc_size remote_size);
 	void(*add_pool_callback)(void *user_data, void* block_extension);
-	void(*unable_to_reallocate_callback)(void *user_data, void *block, void *new_block);
+	void(*unable_to_reallocate_callback)(void *user_data, tloc_header *block, tloc_header *new_block);
 	tloc_size(*adjust_size_callback)(tloc_size size, tloc_index alignment);
 	tloc_size block_extension_size;
 	tloc_size bytes_per_block;
@@ -516,7 +516,7 @@ static inline void tloc__map(tloc_size size, tloc_index *fli, tloc_index *sli) {
 static inline void tloc__null_merge_callback(void *user_data, tloc_header *block1, tloc_header *block2) { return; }
 static inline void tloc__null_split_callback(void *user_data, tloc_header *block, tloc_header *trimmed, tloc_size remote_size) { return; }
 static inline void tloc__null_add_pool_callback(void *user_data, void *block) { return; }
-static inline void tloc__null_unable_to_reallocate_callback(void *user_data, void *block, void *new_block) { return; }
+static inline void tloc__null_unable_to_reallocate_callback(void *user_data, tloc_header *block, tloc_header *new_block) { return; }
 static inline tloc_size tloc__zero_size_adjust(tloc_size size, tloc_index alignment) { return 0; }
 static inline void tloc__unset_remote_block_limit_reached(tloc_allocator *allocator) { allocator->block_extension_size &= ~1; };
 #endif

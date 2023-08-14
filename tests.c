@@ -7,7 +7,7 @@
 #define TLOC_ERROR_COLOR "\033[90m"
 #define TLOC_IMPLEMENTATION
 //#define TLOC_OUTPUT_ERROR_MESSAGES
-#define TLOC_THREAD_SAFE
+//#define TLOC_THREAD_SAFE
 #define TLOC_ENABLE_REMOTE_MEMORY
 #define TLOC_MAX_SIZE_INDEX 35		//max block size 34GB
 #include "2loc.h"
@@ -60,7 +60,6 @@ double _Generate(tloc_random *random) {
 	random->seeds[0] = s0;
 	s1 ^= s1 << 23; // a
 	random->seeds[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5); // b, c
-	double test = TWO64f;
 	return (double)result / TWO64f;
 }
 
@@ -79,7 +78,7 @@ static void tloc__output(void* ptr, size_t size, int free, void* user, int is_fi
 {
 	(void)user;
 	tloc_header *block = (tloc_header*)ptr;
-	printf("\t%p %s size: %zi (%p), (%p), (%p)\n", ptr, free ? "free" : "used", size, ptr, block->next_free_block, block->prev_free_block);
+    printf("\t%p %s size: %zi (%p), (%p), (%p)\n", ptr, free ? "free" : "used", size, ptr, size ? block->next_free_block : 0, size ? block->prev_free_block : 0);
 	if (is_final_output) {
 		printf("\t------------- * ---------------\n");
 	}
@@ -173,7 +172,7 @@ tloc_header *tloc_SearchList(tloc_allocator *allocator, tloc_header *search) {
 }
 
 //Test if passing a memory pool that is too small to the initialiser is handled gracefully
-int TestPoolTooSmall() {
+int TestPoolTooSmall(void) {
 	void *memory = malloc(1024);
 	tloc_allocator *allocator = tloc_InitialiseAllocatorWithPool(memory, 1024);
 	if (!allocator) {
@@ -303,7 +302,6 @@ int TestAllocateFreeSameSizeBlocks(void) {
 	if (!allocator) {
 		result = 0;
 	}
-	tloc_size allocated = 0;
 	void *allocations[40];
 	for (int i = 0; i != 20; ++i) {
 		allocations[i] = tloc_Allocate(allocator, 1024);
@@ -330,9 +328,6 @@ int TestAllocateFreeSameSizeBlocks(void) {
 		if (allocations[i]) {
 			tloc__error_codes error = tloc_VerifyBlocks(tloc__allocator_first_block(allocator), 0, 0);
 			assert(error == tloc__OK);
-			if (i == 11) {
-				int d = 0;
-			}
 			tloc_Free(allocator, allocations[i]);
 			assert(tloc_VerifyBlocks(tloc__allocator_first_block(allocator), 0, 0) == tloc__OK);
 		}
@@ -543,9 +538,6 @@ int TestManyAllocationsAndFreesAddPools(tloc_uint iterations, tloc_size pool_siz
 		void *allocations[100];
 		memset(allocations, 0, sizeof(void*) * 100);
 		for (int i = 0; i != iterations; ++i) {
-			if (i == 326) {
-				int d = 0;
-			}
 			int index = rand() % 100;
 			if (allocations[index]) {
 				tloc_Free(allocator, allocations[index]);
@@ -562,12 +554,14 @@ int TestManyAllocationsAndFreesAddPools(tloc_uint iterations, tloc_size pool_siz
 				else if(memory_index < 8) {
 					//We ran out of memory, add a new pool
 					memory[memory_index] = malloc(pool_size);
-					tloc_AddPool(allocator, memory[memory_index++], pool_size);
-					allocations[index] = tloc_Allocate(allocator, allocation_size);
-					if (!allocations[index]) {
-						result = 0;
-						break;
-					}
+                    if(memory[memory_index]) {
+                        tloc_AddPool(allocator, memory[memory_index++], pool_size);
+                        allocations[index] = tloc_Allocate(allocator, allocation_size);
+                        if (!allocations[index]) {
+                            result = 0;
+                            break;
+                        }
+                    }
 				}
 			}
 			assert(tloc_VerifyBlocks(tloc__allocator_first_block(allocator), 0, 0) == tloc__OK);
@@ -950,7 +944,7 @@ void on_reallocation_copy(void *user_data, tloc_header* block, tloc_header *new_
 	remote_memory_pools *pools = (remote_memory_pools*)user_data;
 	remote_buffer *buffer = tloc__block_user_extension_ptr(block);
 	remote_buffer *new_buffer = tloc__block_user_extension_ptr(new_block);
-	new_buffer->data = (void*)((char*)buffer->pool + new_buffer->offset_from_pool);
+	new_buffer->data = (void*)((char*)new_buffer->pool + new_buffer->offset_from_pool);
 	memcpy(new_buffer->data, buffer->data, buffer->size);
 }
 
@@ -1114,9 +1108,6 @@ int TestRemoteMemoryReallocationIterations(tloc_uint iterations, tloc_size pool_
 	memset(buffers, 0, sizeof(void*) * 100);
 	for (int i = 0; i != iterations; ++i) {
 		int index = rand() % 100;
-		if (i == 207) {
-			int d = 0;
-		}
 		tloc_size allocation_size = (tloc_size)_tloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
 		buffers[index] = tloc_ReallocateRemote(allocator, buffers[index], allocation_size);
 		if (!buffers[index]) {
@@ -1225,11 +1216,6 @@ int main() {
 	_ReSeed(&random, time);
 	//_ReSeed(&random, 245000);
 	//_ReSeed(&random, 123456);
-
-	size_t size_of_header = sizeof(tloc_header);
-	size_t size_of_size = sizeof(tloc_size);
-	PrintTestResult("Test: Remote memory management, Reallocation", TestRemoteMemoryReallocation(10000, tloc__MEGABYTE(16), 512, 16, tloc__KILOBYTE(1), &random));
-	return 0;
 
 #if defined(TLOC_THREAD_SAFE)
 	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(AllocationWorker, 1000, tloc__MEGABYTE(128), tloc__MINIMUM_BLOCK_SIZE, tloc__KILOBYTE(256), 2, &random));
