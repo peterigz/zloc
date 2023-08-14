@@ -238,7 +238,7 @@ typedef struct tloc_allocator {
 
 #if defined(TLOC_ENABLE_REMOTE_MEMORY)
 #define tloc__map_size (remote_size ? remote_size : size)
-#define tloc__do_size_class_callback allocator->get_block_size_callback(block)
+#define tloc__do_size_class_callback(block) allocator->get_block_size_callback(block)
 #define tloc__do_merge_next_callback allocator->merge_next_callback(allocator->user_data, block, next_block)
 #define tloc__do_merge_prev_callback allocator->merge_prev_callback(allocator->user_data, prev_block, block)
 #define tloc__do_split_block_callback allocator->split_block_callback(allocator->user_data, block, trimmed, remote_size)
@@ -251,7 +251,7 @@ typedef struct tloc_allocator {
 #define tloc__maybe_assert_block_size 
 #else
 #define tloc__map_size size
-#define tloc__do_size_class_callback tloc__block_size(block)
+#define tloc__do_size_class_callback(block) tloc__block_size(block)
 #define tloc__do_merge_next_callback
 #define tloc__do_merge_prev_callback
 #define tloc__do_split_block_callback
@@ -680,7 +680,7 @@ static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *bloc
 	tloc_index fli;
 	tloc_index sli;
 	//Get the size class of the block
-	tloc__map(tloc__do_size_class_callback, &fli, &sli);
+	tloc__map(tloc__do_size_class_callback(block), &fli, &sli);
 	tloc_header *current_block_in_free_list = allocator->segregated_lists[fli][sli];
 	//Insert the block into the list by updating the next and prev free blocks of
 	//this and the current block in the free list. The current block in the free
@@ -734,7 +734,7 @@ static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index
 static inline void tloc__remove_block_from_segregated_list(tloc_allocator *allocator, tloc_header *block) {
 	tloc_index fli, sli;
 	//Get the size class
-	tloc__map(tloc__do_size_class_callback, &fli, &sli);
+	tloc__map(tloc__do_size_class_callback(block), &fli, &sli);
 	tloc_header *prev_block = block->prev_free_block;
 	tloc_header *next_block = block->next_free_block;
 	TLOC_ASSERT(prev_block);
@@ -978,40 +978,28 @@ void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	return 0;
 }
 
-#if defined(TLOC_ENABLE_REMOTE_MEMORY)
-void *tloc__reallocate(tloc_allocator *allocator, void *ptr, tloc_size size, tloc_size remote_size) {
-#else
 void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size) {
-#endif
 	tloc__lock_thread_access;
 
-	if (ptr && tloc__map_size == 0) {
+	if (ptr && size == 0) {
 		tloc__unlock_thread_access;
 		tloc_Free(allocator, ptr);
 	}
 
 	if (!ptr) {
 		tloc__unlock_thread_access;
-#if defined(TLOC_ENABLE_REMOTE_MEMORY)
-		return tloc__allocate(allocator, size, remote_size);
-#else
-		return tloc_Allocate(allocator, tloc__map_size);
-#endif
+		return tloc_Allocate(allocator, size);
 	}
 
 	tloc_header *block = tloc__block_from_allocation(ptr);
 	tloc_header *next_block = tloc__next_physical_block(block);
 	void *allocation = 0;
 	tloc_size current_size = tloc__block_size(block);
-	tloc_size adjusted_size = tloc__adjust_size(tloc__map_size, tloc__MEMORY_ALIGNMENT);
+	tloc_size adjusted_size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
 	tloc_size combined_size = current_size + tloc__block_size(next_block);
 	if ((!tloc__next_block_is_free(block) || adjusted_size > combined_size) && adjusted_size > current_size) {
 		tloc__access_override;
-#if defined(TLOC_ENABLE_REMOTE_MEMORY)
-		allocation = tloc__allocate(allocator, size, remote_size);
-#else
 		allocation = tloc_Allocate(allocator, size);
-#endif
 		if (allocation) {
 			tloc_size smallest_size = tloc__Min(current_size, size);
 			memcpy(allocation, ptr, smallest_size);
@@ -1052,10 +1040,6 @@ int tloc_Free(tloc_allocator *allocator, void* allocation) {
 #if defined(TLOC_ENABLE_REMOTE_MEMORY)
 void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 	return tloc__allocate(allocator, size, 0);
-}
-
-void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size) {
-	return tloc__reallocate(allocator, ptr, size, 0);
 }
 
 void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size) {
@@ -1120,9 +1104,52 @@ void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_size) {
 	return allocation ? (char*)allocation + tloc__MINIMUM_BLOCK_SIZE : 0;
 }
 
+void *tloc__reallocate_remote(tloc_allocator *allocator, void *ptr, tloc_size size, tloc_size remote_size) {
+	tloc__lock_thread_access;
+
+	if (ptr && remote_size == 0) {
+		tloc__unlock_thread_access;
+		tloc_FreeRemote(allocator, ptr);
+	}
+
+	if (!ptr) {
+		tloc__unlock_thread_access;
+		return tloc__allocate(allocator, size, remote_size);
+	}
+
+	tloc_header *block = tloc__block_from_allocation(ptr);
+	tloc_header *next_block = tloc__next_physical_block(block);
+	void *allocation = 0;
+	tloc_size current_size = tloc__block_size(block);
+	tloc_size current_remote_size = tloc__do_size_class_callback(block);
+	tloc_size adjusted_size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
+	tloc_size combined_size = current_size + tloc__block_size(next_block);
+	tloc_size combined_remote_size = current_remote_size + tloc__do_size_class_callback(next_block);
+	if ((!tloc__next_block_is_free(block) || adjusted_size > combined_size || remote_size > combined_remote_size) && (remote_size > current_remote_size)) {
+		tloc__access_override;
+		allocation = tloc__allocate(allocator, size, remote_size);
+		if (allocation) {
+			tloc__do_unable_to_reallocate_callback;
+			tloc_Free(allocator, ptr);
+		}
+	}
+	else {
+		//Reallocation is possible
+		if (remote_size > current_remote_size)
+		{
+			tloc__merge_with_next_block(allocator, block);
+			tloc__mark_block_as_used(block);
+		}
+		allocation = tloc__maybe_split_block(allocator, block, adjusted_size, remote_size);
+	}
+
+	tloc__unlock_thread_access;
+	return allocation;
+}
+
 void *tloc_ReallocateRemote(tloc_allocator *allocator, void *block_extension, tloc_size remote_size) {
 	TLOC_ASSERT(allocator->bytes_per_block > 0);
-	void* allocation = tloc__reallocate(allocator, block_extension ? tloc__allocation_from_extension_ptr(block_extension) : block_extension, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + tloc__BLOCK_POINTER_OFFSET), remote_size);
+	void* allocation = tloc__reallocate_remote(allocator, block_extension ? tloc__allocation_from_extension_ptr(block_extension) : block_extension, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + tloc__BLOCK_POINTER_OFFSET), remote_size);
 	return allocation ? (char*)allocation + tloc__MINIMUM_BLOCK_SIZE : 0;
 }
 
