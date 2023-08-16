@@ -144,7 +144,7 @@ tloc__error_codes tloc_VerifyRemoteBlocks(tloc_header *first_block, tloc__block_
 	tloc_header *current_block = first_block;
 	int count = 0;
 	while (!tloc__is_last_block_in_pool(current_block)) {
-		void *remote_block = tloc__block_user_extension_ptr(current_block);
+		void *remote_block = tloc_BlockUserExtensionPtr(current_block);
 		if (output_function) {
 			output_function(current_block, tloc__block_size(current_block), tloc__is_free_block(current_block), remote_block, ++count);
 		}
@@ -897,7 +897,7 @@ typedef struct remote_buffer {
 } remote_buffer;
 
 tloc_size get_remote_size(const tloc_header *block) {
-	remote_buffer *buffer = (remote_buffer*)tloc__block_user_extension_ptr(block);
+	remote_buffer *buffer = (remote_buffer*)tloc_BlockUserExtensionPtr(block);
 	return buffer->size;
 }
 
@@ -910,20 +910,20 @@ void on_add_pool(void *user_data, void *block) {
 }
 
 void on_merge_next(void *user_data, tloc_header *block, tloc_header *next_block) {
-	remote_buffer *buffer = tloc__block_user_extension_ptr(block);
-	remote_buffer *next_buffer = tloc__block_user_extension_ptr(next_block);
+	remote_buffer *buffer = tloc_BlockUserExtensionPtr(block);
+	remote_buffer *next_buffer = tloc_BlockUserExtensionPtr(next_block);
 	buffer->size += next_buffer->size;
 	next_buffer->offset_from_pool = 0;
 	next_buffer->size = 0;
 }
 
 void on_merge_prev(void *user_data, tloc_header *prev_block, tloc_header *block) {
-	remote_buffer *buffer = tloc__block_user_extension_ptr(block);
+	remote_buffer *buffer = tloc_BlockUserExtensionPtr(block);
 	if (buffer->offset_from_pool == 0) {
 		//Can't merge across pools
 		//return;
 	}
-	remote_buffer *prev_buffer = tloc__block_user_extension_ptr(prev_block);
+	remote_buffer *prev_buffer = tloc_BlockUserExtensionPtr(prev_block);
 	prev_buffer->size += buffer->size;
 	buffer->offset_from_pool = 0;
 	buffer->size = 0;
@@ -931,8 +931,8 @@ void on_merge_prev(void *user_data, tloc_header *prev_block, tloc_header *block)
 
 void on_split_block(void *user_data, tloc_header* block, tloc_header *trimmed_block, tloc_size remote_size) {
 	remote_memory_pools *pools = (remote_memory_pools*)user_data;
-	remote_buffer *buffer = tloc__block_user_extension_ptr(block);
-	remote_buffer *trimmed_buffer = tloc__block_user_extension_ptr(trimmed_block);
+	remote_buffer *buffer = tloc_BlockUserExtensionPtr(block);
+	remote_buffer *trimmed_buffer = tloc_BlockUserExtensionPtr(trimmed_block);
 	trimmed_buffer->size = buffer->size - remote_size;
 	buffer->size = remote_size;
 	trimmed_buffer->pool = buffer->pool;
@@ -942,8 +942,8 @@ void on_split_block(void *user_data, tloc_header* block, tloc_header *trimmed_bl
 
 void on_reallocation_copy(void *user_data, tloc_header* block, tloc_header *new_block) {
 	remote_memory_pools *pools = (remote_memory_pools*)user_data;
-	remote_buffer *buffer = tloc__block_user_extension_ptr(block);
-	remote_buffer *new_buffer = tloc__block_user_extension_ptr(new_block);
+	remote_buffer *buffer = tloc_BlockUserExtensionPtr(block);
+	remote_buffer *new_buffer = tloc_BlockUserExtensionPtr(new_block);
 	new_buffer->data = (void*)((char*)new_buffer->pool + new_buffer->offset_from_pool);
 	memcpy(new_buffer->data, buffer->data, buffer->size);
 }

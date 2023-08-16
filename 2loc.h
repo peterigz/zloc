@@ -216,7 +216,6 @@ typedef struct tloc_allocator {
 #endif
 #if defined(TLOC_ENABLE_REMOTE_MEMORY)
 	void *user_data;
-	tloc_header *last_block;
 	tloc_size(*get_block_size_callback)(const tloc_header* block);
 	void(*merge_next_callback)(void *user_data, tloc_header* block, tloc_header *next_block);
 	void(*merge_prev_callback)(void *user_data, tloc_header* prev_block, tloc_header *block);
@@ -247,7 +246,6 @@ typedef struct tloc_allocator {
 #define tloc__do_adjust_size_callback allocator->adjust_size_callback(size, tloc__MEMORY_ALIGNMENT)
 #define tloc__block_extension_size (allocator->block_extension_size & ~1)
 #define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, remote_size) 
-#define tloc__maybe_block_extra_pools TLOC_ASSERT(!allocator->last_block);
 #define tloc__maybe_assert_block_size 
 #else
 #define tloc__map_size size
@@ -260,7 +258,6 @@ typedef struct tloc_allocator {
 #define tloc__do_adjust_size_callback tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT)
 #define tloc__block_extension_size 0
 #define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, 0) 
-#define tloc__maybe_block_extra_pools
 #define tloc__maybe_assert_block_size TLOC_ASSERT(tloc__block_size(block) >= size)
 #endif
 
@@ -496,9 +493,15 @@ TLOC_API void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_s
 */
 TLOC_API tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_allocator *allocator, tloc_size remote_pool_size);
 
-TLOC_API tloc_header *tloc_GetLastFreePhysicalBlock(tloc_allocator *allocator);
-
 TLOC_API void tloc_AddRemotePool(tloc_allocator *allocator, void *block_memory, tloc_size block_memory_size, tloc_size remote_pool_size);
+
+TLOC_API static inline void* tloc_BlockUserExtensionPtr(const tloc_header *block) {
+	return (char*)block + sizeof(tloc_header);
+}
+
+TLOC_API static inline void* tloc_AllocationFromExtensionPtr(const void *block) {
+	return (void*)((char*)block - tloc__MINIMUM_BLOCK_SIZE);
+}
 
 #endif
 
@@ -572,14 +575,6 @@ static inline tloc_header *tloc__null_block(tloc_allocator *allocator) {
 
 static inline void* tloc__block_user_ptr(const tloc_header *block) {
 	return (char*)block + tloc__BLOCK_POINTER_OFFSET;
-}
-
-static inline void* tloc__block_user_extension_ptr(const tloc_header *block) {
-	return (char*)block + sizeof(tloc_header);
-}
-
-static inline void* tloc__allocation_from_extension_ptr(const void *block) {
-	return (void*)((char*)block - tloc__MINIMUM_BLOCK_SIZE);
 }
 
 static inline tloc_header* tloc__first_block_in_pool(const tloc_pool *pool) {
@@ -885,8 +880,7 @@ tloc_pool *tloc_GetPool(tloc_allocator *allocator) {
 
 tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size) {
 	tloc__lock_thread_access;
-	tloc__maybe_block_extra_pools;			//You can only have a single pool to manage the ranges in a remote block. 
-											//Allocate more space to begin with if you need more.
+
 	//Offset it back by the pointer size, we don't need the prev_physical block pointer as there is none
 	//for the first block in the pool
 	tloc_header *block = tloc__first_block_in_pool(memory);
@@ -1060,13 +1054,6 @@ tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_allocator *allocator, tloc_size
 	return (sizeof(tloc_header) + allocator->block_extension_size) * (remote_pool_size / allocator->bytes_per_block) + tloc__BLOCK_POINTER_OFFSET;
 }
 
-tloc_header *tloc_GetLastFreePhysicalBlock(tloc_allocator *allocator) {
-	TLOC_ASSERT(allocator->last_block);		//allocator must be initialised with tloc_InitialiseAllocatorForRemote;
-	tloc_header *block = allocator->last_block->prev_physical_block;
-	TLOC_ASSERT(tloc__is_free_block(block));		//There are no free blocks left to manage the remote memory.
-	return block;
-}
-
 void tloc_AddRemotePool(tloc_allocator *allocator, void *block_memory, tloc_size block_memory_size, tloc_size remote_pool_size) {
 	TLOC_ASSERT(allocator->add_pool_callback);	//You must set all the necessary callbacks to handle remote memory management
 	TLOC_ASSERT(allocator->get_block_size_callback);
@@ -1075,7 +1062,7 @@ void tloc_AddRemotePool(tloc_allocator *allocator, void *block_memory, tloc_size
 	TLOC_ASSERT(allocator->split_block_callback);
 	TLOC_ASSERT(allocator->adjust_size_callback);
 
-	void *block = tloc__block_user_extension_ptr(tloc__first_block_in_pool(block_memory));
+	void *block = tloc_BlockUserExtensionPtr(tloc__first_block_in_pool(block_memory));
 	tloc__do_add_pool_callback;
 	tloc_AddPool(allocator, block_memory, block_memory_size);
 }
@@ -1093,7 +1080,6 @@ tloc_allocator *tloc_InitialiseAllocatorForRemote(void *memory, tloc_size size) 
 	}
 	void *pool = tloc_AddPool(allocator, tloc_GetPool(allocator), size - tloc_AllocatorSize());
 	tloc_header *first_block = tloc__first_block_in_pool(pool);
-	allocator->last_block = tloc__next_physical_block(first_block);
 
 	return allocator;
 }
@@ -1149,7 +1135,7 @@ void *tloc__reallocate_remote(tloc_allocator *allocator, void *ptr, tloc_size si
 
 void *tloc_ReallocateRemote(tloc_allocator *allocator, void *block_extension, tloc_size remote_size) {
 	TLOC_ASSERT(allocator->bytes_per_block > 0);
-	void* allocation = tloc__reallocate_remote(allocator, block_extension ? tloc__allocation_from_extension_ptr(block_extension) : block_extension, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + tloc__BLOCK_POINTER_OFFSET), remote_size);
+	void* allocation = tloc__reallocate_remote(allocator, block_extension ? tloc_AllocationFromExtensionPtr(block_extension) : block_extension, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + tloc__BLOCK_POINTER_OFFSET), remote_size);
 	return allocation ? (char*)allocation + tloc__MINIMUM_BLOCK_SIZE : 0;
 }
 
