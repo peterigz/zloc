@@ -1,8 +1,8 @@
-# 2loc - A Two Level Segregated Fit Memory Allocator
+# Pocket Allocator - A Two Level Segregated Fit Memory Allocator
 
-This software is dual-licensed to the public domain and under the following license: you are granted a perpetual, irrevocable license to copy, modify, publish, and distribute this file as you see fit.
+This software is dual-licensed to the public domain and under the following license: you are granted a perpetual, irrevocable license to copy, modify, publish, and distribute this file as you see fit. See LICENSE file for details.
 
-This library is based on the following paper:
+This library is a single header mimimal allocator based on the following paper:
 
 TLSF: a New Dynamic Memory Allocator for Real-Time Systems [not so new now, the paper was from 2005] M. Masmano, I. Ripoll, A. Crespo, and J. Real Universidad Politecnica de Valencia, Spain http://www.gii.upv.es/tlsf/files/ecrts04_tlsf.pdf
 
@@ -13,7 +13,7 @@ This library is for sub allocating memory blocks within larger memory allocation
 
 Allocating and freeing those memory blocks happens at O(1) time complexity and should for the most part keep fragmentation at a minimum.
 
-This is meant for use in trusted environments or apps where security isn't going to be an issue. I made it as a convenient way to sub allocate in larger memory pools to avoid clogging things up with lots of mallocs everywhere. I can use this to easily track memory usage in my programs and if I need to dump the program state to disk if needed which is a lot easier to do when you have your memory pool(s) in one place. You can of course use VirtualAlloc or equivalent but it still gets messy when you're dynamically allocating arrays that might grow in size get freed etc and need a nice way to keep fragmentation under control which this algorithm does well.
+This is meant for use in trusted environments or apps where security isn't going to be an issue. I made it as a convenient way to sub allocate in larger memory pools to avoid clogging things up with lots of mallocs everywhere. You can also use it to manage memory ranges on a separate device like GPU memory.
 
 ## How do I use it?
 Add:
