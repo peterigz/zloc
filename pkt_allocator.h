@@ -1,5 +1,5 @@
 
-/*	Pocket Allocator, a Two Level Segregated Fit memory allocator
+/*	2Loc, a Two Level Segregated Fit memory allocator
 
 	This software is dual-licensed. See bottom of file for license details.
 
@@ -33,14 +33,14 @@
 	#include "2loc.h"
 
 	The interface is very straightforward. Simply allocate a block of memory that you want to use for your
-	pool and then call pkt_Allocate to allocate blocks within that pool and pkt_Free when you're done with
+	pool and then call tloc_Allocate to allocate blocks within that pool and tloc_Free when you're done with
 	an allocation. Don't forget to free the orinal memory you created in the first place. The Allocator doesn't
 	care what you use to create the memory to use with the allocator only that it's read and writable to.
 
 	You can also take a look at the tests.c file for more examples of usage.
 
 	Is it thread safe?
-	define PKT_THREAD_SAFE before you include 2loc.h to make each call to pkt_Allocate and pkt_Free to add 
+	define PKT_THREAD_SAFE before you include 2loc.h to make each call to tloc_Allocate and tloc_Free to add 
 	basic thread safety. Basically all it does is lock the allocator so that only one process can free or 
 	allocate at the same time. Future versions would probably handle this with separate pools per thread.
 
@@ -62,43 +62,43 @@
 #include <assert.h>
 
 //Header
-#define pkt__Min(a, b) (((a) < (b)) ? (a) : (b))
-#define pkt__Max(a, b) (((a) > (b)) ? (a) : (b))
+#define tloc__Min(a, b) (((a) < (b)) ? (a) : (b))
+#define tloc__Max(a, b) (((a) > (b)) ? (a) : (b))
 
 #ifndef PKT_API
 #define PKT_API
 #endif
 
-typedef int pkt_index;
-typedef unsigned int pkt_sl_bitmap;
-typedef unsigned int pkt_uint;
-typedef unsigned int pkt_thread_access;
-typedef int pkt_bool;
-typedef void* pkt_pool;
+typedef int tloc_index;
+typedef unsigned int tloc_sl_bitmap;
+typedef unsigned int tloc_uint;
+typedef unsigned int tloc_thread_access;
+typedef int tloc_bool;
+typedef void* tloc_pool;
 
 #if !defined (PKT_ASSERT)
 #define PKT_ASSERT assert
 #endif
 
-#define pkt__is_pow2(x) ((x) && !((x) & ((x) - 1)))
-#define pkt__glue2(x, y) x ## y
-#define pkt__glue(x, y) pkt__glue2(x, y)
-#define pkt__static_assert(exp) \
-	typedef char pkt__glue(static_assert, __LINE__) [(exp) ? 1 : -1]
+#define tloc__is_pow2(x) ((x) && !((x) & ((x) - 1)))
+#define tloc__glue2(x, y) x ## y
+#define tloc__glue(x, y) tloc__glue2(x, y)
+#define tloc__static_assert(exp) \
+	typedef char tloc__glue(static_assert, __LINE__) [(exp) ? 1 : -1]
 
 #if (defined(_MSC_VER) && defined(_M_X64)) || defined(__x86_64__)
-#define pkt__64BIT
-typedef size_t pkt_size;
-typedef size_t pkt_fl_bitmap;
+#define tloc__64BIT
+typedef size_t tloc_size;
+typedef size_t tloc_fl_bitmap;
 #define PKT_ONE 1ULL
 #else
-typedef size_t pkt_size;
-typedef size_t pkt_fl_bitmap;
+typedef size_t tloc_size;
+typedef size_t tloc_fl_bitmap;
 #define PKT_ONE 1U
 #endif
 
 #ifndef MEMORY_ALIGNMENT_LOG2
-#if defined(pkt__64BIT)
+#if defined(tloc__64BIT)
 #define MEMORY_ALIGNMENT_LOG2 3		//64 bit
 #else
 #define MEMORY_ALIGNMENT_LOG2 2		//32 bit
@@ -120,127 +120,127 @@ typedef size_t pkt_fl_bitmap;
 #define PKT_PRINT_ERROR(message_f, ...)
 #endif
 
-#define pkt__KILOBYTE(Value) ((Value) * 1024LL)
-#define pkt__MEGABYTE(Value) (pkt__KILOBYTE(Value) * 1024LL)
-#define pkt__GIGABYTE(Value) (pkt__MEGABYTE(Value) * 1024LL)
+#define tloc__KILOBYTE(Value) ((Value) * 1024LL)
+#define tloc__MEGABYTE(Value) (tloc__KILOBYTE(Value) * 1024LL)
+#define tloc__GIGABYTE(Value) (tloc__MEGABYTE(Value) * 1024LL)
 
 #ifndef PKT_MAX_SIZE_INDEX
-#if defined(pkt__64BIT)
+#if defined(tloc__64BIT)
 #define PKT_MAX_SIZE_INDEX 32
 #else
 #define PKT_MAX_SIZE_INDEX 30
 #endif
 #endif
 
-pkt__static_assert(PKT_MAX_SIZE_INDEX < 64);
+tloc__static_assert(PKT_MAX_SIZE_INDEX < 64);
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define pkt__MAXIMUM_BLOCK_SIZE (PKT_ONE << PKT_MAX_SIZE_INDEX)
+#define tloc__MAXIMUM_BLOCK_SIZE (PKT_ONE << PKT_MAX_SIZE_INDEX)
 
-enum pkt__constants {
-	pkt__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
-	pkt__MINIMUM_POOL_SIZE = pkt__MEGABYTE(1),
-	pkt__SECOND_LEVEL_INDEX_LOG2 = 5,
-	pkt__FIRST_LEVEL_INDEX_COUNT = PKT_MAX_SIZE_INDEX,
-	pkt__SECOND_LEVEL_INDEX_COUNT = 1 << pkt__SECOND_LEVEL_INDEX_LOG2,
-	pkt__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
-	pkt__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(pkt_size),
-	pkt__MINIMUM_BLOCK_SIZE = 16,
-	pkt__BLOCK_SIZE_OVERHEAD = sizeof(pkt_size),
-	pkt__POINTER_SIZE = sizeof(void*)
+enum tloc__constants {
+	tloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
+	tloc__MINIMUM_POOL_SIZE = tloc__MEGABYTE(1),
+	tloc__SECOND_LEVEL_INDEX_LOG2 = 5,
+	tloc__FIRST_LEVEL_INDEX_COUNT = PKT_MAX_SIZE_INDEX,
+	tloc__SECOND_LEVEL_INDEX_COUNT = 1 << tloc__SECOND_LEVEL_INDEX_LOG2,
+	tloc__FIRST_LEVEL_INDEX_MAX = (1 << (MEMORY_ALIGNMENT_LOG2 + 3)) - 1,
+	tloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(tloc_size),
+	tloc__MINIMUM_BLOCK_SIZE = 16,
+	tloc__BLOCK_SIZE_OVERHEAD = sizeof(tloc_size),
+	tloc__POINTER_SIZE = sizeof(void*)
 };
 
-typedef enum pkt__boundary_tag_flags {
-	pkt__BLOCK_IS_FREE = 1 << 0,
-	pkt__PREV_BLOCK_IS_FREE = 1 << 1,
-} pkt__boundary_tag_flags;
+typedef enum tloc__boundary_tag_flags {
+	tloc__BLOCK_IS_FREE = 1 << 0,
+	tloc__PREV_BLOCK_IS_FREE = 1 << 1,
+} tloc__boundary_tag_flags;
 
-typedef enum pkt__error_codes {
-	pkt__OK,
-	pkt__INVALID_FIRST_BLOCK,
-	pkt__INVALID_BLOCK_FOUND,
-	pkt__PHYSICAL_BLOCK_MISALIGNMENT,
-	pkt__INVALID_SEGRATED_LIST,
-	pkt__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST,
-	pkt__SECOND_LEVEL_BITMAPS_NOT_INITIALISED
-} pkt__error_codes;
+typedef enum tloc__error_codes {
+	tloc__OK,
+	tloc__INVALID_FIRST_BLOCK,
+	tloc__INVALID_BLOCK_FOUND,
+	tloc__PHYSICAL_BLOCK_MISALIGNMENT,
+	tloc__INVALID_SEGRATED_LIST,
+	tloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST,
+	tloc__SECOND_LEVEL_BITMAPS_NOT_INITIALISED
+} tloc__error_codes;
 
-typedef enum pkt__thread_ops {
-	pkt__FREEING_BLOCK = 1 << 0,
-	pkt__ALLOCATING_BLOCK = 1 << 1
-} pkt__thread_ops;
+typedef enum tloc__thread_ops {
+	tloc__FREEING_BLOCK = 1 << 0,
+	tloc__ALLOCATING_BLOCK = 1 << 1
+} tloc__thread_ops;
 
 /*
 	Each block has a header that if used only has a pointer to the previous physical block
 	and the size. If the block is free then the prev and next free blocks are also stored.
 */
-typedef struct pkt_header {
-	struct pkt_header *prev_physical_block;
+typedef struct tloc_header {
+	struct tloc_header *prev_physical_block;
 	/*	Note that the size is either 4 or 8 bytes aligned so the boundary tag (2 flags denoting
 		whether this or the previous block is free) can be stored in the first 2 least
 		significant bits	*/
-	pkt_size size;
-	struct pkt_header *prev_free_block;
-	struct pkt_header *next_free_block;
-} pkt_header;
+	tloc_size size;
+	struct tloc_header *prev_free_block;
+	struct tloc_header *next_free_block;
+} tloc_header;
 
-typedef struct pkt_allocator {
+typedef struct tloc_allocator {
 	/*	This is basically a terminator block that free blocks can point to if they're at the end
 		of a free list. */
-	pkt_header null_block;
+	tloc_header null_block;
 #if defined(PKT_THREAD_SAFE)
 	/* Multithreading protection*/
-	volatile pkt_thread_access access;
-	volatile pkt_thread_access access_override;
+	volatile tloc_thread_access access;
+	volatile tloc_thread_access access_override;
 #endif
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
 	void *user_data;
-	pkt_size(*get_block_size_callback)(const pkt_header* block);
-	void(*merge_next_callback)(void *user_data, pkt_header* block, pkt_header *next_block);
-	void(*merge_prev_callback)(void *user_data, pkt_header* prev_block, pkt_header *block);
-	void(*split_block_callback)(void *user_data, pkt_header* block, pkt_header* trimmed_block, pkt_size remote_size);
+	tloc_size(*get_block_size_callback)(const tloc_header* block);
+	void(*merge_next_callback)(void *user_data, tloc_header* block, tloc_header *next_block);
+	void(*merge_prev_callback)(void *user_data, tloc_header* prev_block, tloc_header *block);
+	void(*split_block_callback)(void *user_data, tloc_header* block, tloc_header* trimmed_block, tloc_size remote_size);
 	void(*add_pool_callback)(void *user_data, void* block_extension);
-	void(*unable_to_reallocate_callback)(void *user_data, pkt_header *block, pkt_header *new_block);
-	pkt_size(*adjust_size_callback)(pkt_size size, pkt_index alignment);
-	pkt_size block_extension_size;
-	pkt_size bytes_per_block;
+	void(*unable_to_reallocate_callback)(void *user_data, tloc_header *block, tloc_header *new_block);
+	tloc_size(*adjust_size_callback)(tloc_size size, tloc_index alignment);
+	tloc_size block_extension_size;
+	tloc_size bytes_per_block;
 #endif
 	/*	Here we store all of the free block data. first_level_bitmap is either a 32bit int
-	or 64bit depending on whether pkt__64BIT is set. Second_level_bitmaps are an array of 32bit
+	or 64bit depending on whether tloc__64BIT is set. Second_level_bitmaps are an array of 32bit
 	ints. segregated_lists is a two level array pointing to free blocks or null_block if the list
 	is empty. */
-	pkt_fl_bitmap first_level_bitmap;
-	pkt_sl_bitmap second_level_bitmaps[pkt__FIRST_LEVEL_INDEX_COUNT];
-	pkt_header *segregated_lists[pkt__FIRST_LEVEL_INDEX_COUNT][pkt__SECOND_LEVEL_INDEX_COUNT];
-} pkt_allocator;
+	tloc_fl_bitmap first_level_bitmap;
+	tloc_sl_bitmap second_level_bitmaps[tloc__FIRST_LEVEL_INDEX_COUNT];
+	tloc_header *segregated_lists[tloc__FIRST_LEVEL_INDEX_COUNT][tloc__SECOND_LEVEL_INDEX_COUNT];
+} tloc_allocator;
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
-#define pkt__map_size (remote_size ? remote_size : size)
-#define pkt__do_size_class_callback(block) allocator->get_block_size_callback(block)
-#define pkt__do_merge_next_callback allocator->merge_next_callback(allocator->user_data, block, next_block)
-#define pkt__do_merge_prev_callback allocator->merge_prev_callback(allocator->user_data, prev_block, block)
-#define pkt__do_split_block_callback allocator->split_block_callback(allocator->user_data, block, trimmed, remote_size)
-#define pkt__do_add_pool_callback allocator->add_pool_callback(allocator->user_data, block)
-#define pkt__do_unable_to_reallocate_callback pkt_header *new_block = pkt__block_from_allocation(allocation); pkt_header *block = pkt__block_from_allocation(ptr); allocator->unable_to_reallocate_callback(allocator->user_data, block, new_block)
-#define pkt__do_adjust_size_callback allocator->adjust_size_callback(size, pkt__MEMORY_ALIGNMENT)
-#define pkt__block_extension_size (allocator->block_extension_size & ~1)
-#define pkt__call_maybe_split_block pkt__maybe_split_block(allocator, block, size, remote_size) 
-#define pkt__maybe_assert_block_size 
+#define tloc__map_size (remote_size ? remote_size : size)
+#define tloc__do_size_class_callback(block) allocator->get_block_size_callback(block)
+#define tloc__do_merge_next_callback allocator->merge_next_callback(allocator->user_data, block, next_block)
+#define tloc__do_merge_prev_callback allocator->merge_prev_callback(allocator->user_data, prev_block, block)
+#define tloc__do_split_block_callback allocator->split_block_callback(allocator->user_data, block, trimmed, remote_size)
+#define tloc__do_add_pool_callback allocator->add_pool_callback(allocator->user_data, block)
+#define tloc__do_unable_to_reallocate_callback tloc_header *new_block = tloc__block_from_allocation(allocation); tloc_header *block = tloc__block_from_allocation(ptr); allocator->unable_to_reallocate_callback(allocator->user_data, block, new_block)
+#define tloc__do_adjust_size_callback allocator->adjust_size_callback(size, tloc__MEMORY_ALIGNMENT)
+#define tloc__block_extension_size (allocator->block_extension_size & ~1)
+#define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, remote_size) 
+#define tloc__maybe_assert_block_size 
 #else
-#define pkt__map_size size
-#define pkt__do_size_class_callback(block) pkt__block_size(block)
-#define pkt__do_merge_next_callback
-#define pkt__do_merge_prev_callback
-#define pkt__do_split_block_callback
-#define pkt__do_add_pool_callback
-#define pkt__do_unable_to_reallocate_callback
-#define pkt__do_adjust_size_callback pkt__adjust_size(size, pkt__MEMORY_ALIGNMENT)
-#define pkt__block_extension_size 0
-#define pkt__call_maybe_split_block pkt__maybe_split_block(allocator, block, size, 0) 
-#define pkt__maybe_assert_block_size PKT_ASSERT(pkt__block_size(block) >= size)
+#define tloc__map_size size
+#define tloc__do_size_class_callback(block) tloc__block_size(block)
+#define tloc__do_merge_next_callback
+#define tloc__do_merge_prev_callback
+#define tloc__do_split_block_callback
+#define tloc__do_add_pool_callback
+#define tloc__do_unable_to_reallocate_callback
+#define tloc__do_adjust_size_callback tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT)
+#define tloc__block_extension_size 0
+#define tloc__call_maybe_split_block tloc__maybe_split_block(allocator, block, size, 0) 
+#define tloc__maybe_assert_block_size PKT_ASSERT(tloc__block_size(block) >= size)
 #endif
 
 #if defined (_MSC_VER) && (_MSC_VER >= 1400) && (defined (_M_IX86) || defined (_M_X64))
@@ -248,19 +248,19 @@ typedef struct pkt_allocator {
 
 #include <intrin.h>
 
-static inline int pkt__scan_reverse(pkt_size bitmap) {
+static inline int tloc__scan_reverse(tloc_size bitmap) {
 	unsigned long index;
-#if defined(pkt__64BIT)
+#if defined(tloc__64BIT)
 	return _BitScanReverse64(&index, bitmap) ? index : -1;
 #else
 	return _BitScanReverse(&index, bitmap) ? index : -1;
 #endif
 }
 
-static inline int pkt__scan_forward(pkt_size bitmap)
+static inline int tloc__scan_forward(tloc_size bitmap)
 {
 	unsigned long index;
-#if defined(pkt__64BIT)
+#if defined(tloc__64BIT)
 	return _BitScanForward64(&index, bitmap) ? index : -1;
 #else
 	return _BitScanForward(&index, bitmap) ? index : -1;
@@ -269,7 +269,7 @@ static inline int pkt__scan_forward(pkt_size bitmap)
 
 #ifdef _WIN32
 #include <Windows.h>
-static inline pkt_thread_access pkt__compare_and_exchange(volatile pkt_thread_access* target, pkt_thread_access value, pkt_thread_access original) {
+static inline tloc_thread_access tloc__compare_and_exchange(volatile tloc_thread_access* target, tloc_thread_access value, tloc_thread_access original) {
 	return InterlockedCompareExchange(target, value, original);
 }
 #endif
@@ -278,25 +278,25 @@ static inline pkt_thread_access pkt__compare_and_exchange(volatile pkt_thread_ac
       (defined(__i386__) || defined(__x86_64__)) || defined(__clang__)
 /* GNU C/C++ or Clang support on x86/x64 architectures. */
 
-static inline int pkt__scan_reverse(pkt_size bitmap)
+static inline int tloc__scan_reverse(tloc_size bitmap)
 {
-#if defined(pkt__64BIT)
+#if defined(tloc__64BIT)
     return 64 - __builtin_clzll(bitmap) - 1;
 #else
     return 32 - __builtin_clz((int)bitmap) - 1;
 #endif
 }
 
-static inline int pkt__scan_forward(pkt_size bitmap)
+static inline int tloc__scan_forward(tloc_size bitmap)
 {
-#if defined(pkt__64BIT)
+#if defined(tloc__64BIT)
     return __builtin_ffsll(bitmap) - 1;
 #else
     return __builtin_ffs((int)bitmap) - 1;
 #endif
 }
 
-static inline pkt_thread_access pkt__compare_and_exchange(volatile pkt_thread_access* target, pkt_thread_access value, pkt_thread_access original) {
+static inline tloc_thread_access tloc__compare_and_exchange(volatile tloc_thread_access* target, tloc_thread_access value, tloc_thread_access original) {
 	return __sync_val_compare_and_swap(target, original, value);
 }
 
@@ -312,26 +312,26 @@ This are the main functions you'll need to use this library, everything else is 
 	necessary data structures to store the allocator.
 
 	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
-	@param	pkt_size				The size of the memory you're passing
-	@returns pkt_allocator*		A pointer to a pkt_allocator which you'll need to use when calling pkt_Allocate or pkt_Free. Note that
+	@param	tloc_size				The size of the memory you're passing
+	@returns tloc_allocator*		A pointer to a tloc_allocator which you'll need to use when calling tloc_Allocate or tloc_Free. Note that
 									this pointer will be the same address as the memory you're passing in as all the information the allocator
 									stores to organise memory blocks is stored at the beginning of the memory.
 									If something went wrong then 0 is returned. Define PKT_OUTPUT_ERROR_MESSAGES before including this header
 									file to see any errors in the console.
 */
-PKT_API pkt_allocator *pkt_InitialiseAllocator(void *memory);
+PKT_API tloc_allocator *tloc_InitialiseAllocator(void *memory);
 
 /*
 	Initialise an allocator and a pool at the same time. The data stucture to store the allocator will be stored at the beginning of the memory
 	you pass to the function and the remaining memory will be used as the pool.
 
 	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
-	@param	pkt_size				The size of the memory you're passing
-	@returns pkt_allocator*		A pointer to a pkt_allocator which you'll need to use when calling pkt_Allocate or pkt_Free.
+	@param	tloc_size				The size of the memory you're passing
+	@returns tloc_allocator*		A pointer to a tloc_allocator which you'll need to use when calling tloc_Allocate or tloc_Free.
 									If something went wrong then 0 is returned. Define PKT_OUTPUT_ERROR_MESSAGES before including this header
 									file to see any errors in the console.
 */
-PKT_API pkt_allocator *pkt_InitialiseAllocatorWithPool(void *memory, pkt_size size);
+PKT_API tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size);
 
 /*
 	Add a new memory pool to the allocator. Pools don't have to all be the same size, adding a pool will create the biggest block it can within
@@ -339,95 +339,95 @@ PKT_API pkt_allocator *pkt_InitialiseAllocatorWithPool(void *memory, pkt_size si
 	together in the segregated list because all blocks are linked together with a linked list either as physical neighbours or free blocks in
 	the segregated list.
 
-	@param	pkt_allocator*			A pointer to some previously initialised allocator
+	@param	tloc_allocator*			A pointer to some previously initialised allocator
 	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
-	@param	pkt_size				The size of the memory you're passing
-	@returns pkt_pool*				A pointer to the pool 
+	@param	tloc_size				The size of the memory you're passing
+	@returns tloc_pool*				A pointer to the pool 
 */
-PKT_API pkt_pool *pkt_AddPool(pkt_allocator *allocator, void *memory, pkt_size size);
+PKT_API tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size);
 
 /*
 	Get the structure size of an allocator. You can use this to take into account the overhead of the allocator when preparing a new allocator
 	with memory pool.
 
-	@returns pkt_size				The struct size of the allocator in bytes
+	@returns tloc_size				The struct size of the allocator in bytes
 */
-PKT_API pkt_size pkt_AllocatorSize(void);
+PKT_API tloc_size tloc_AllocatorSize(void);
 
 /*
 	If you initialised an allocator with a pool then you can use this function to get a pointer to the start of the pool. It won't get a pointer
-	to any other pool in the allocator. You can just get that when you call pkt_AddPool.
+	to any other pool in the allocator. You can just get that when you call tloc_AddPool.
 
-	@param	pkt_allocator*			A pointer to some previously initialised allocator
-	@returns pkt_pool				A pointer to the pool memory in the allocator
+	@param	tloc_allocator*			A pointer to some previously initialised allocator
+	@returns tloc_pool				A pointer to the pool memory in the allocator
 */
-PKT_API pkt_pool *pkt_GetPool(pkt_allocator *allocator);
+PKT_API tloc_pool *tloc_GetPool(tloc_allocator *allocator);
 
 /*
-	Allocate some memory within a pkt_allocator of the specified size. Minimum size is 16 bytes. 
+	Allocate some memory within a tloc_allocator of the specified size. Minimum size is 16 bytes. 
 
-	@param	pkt_allocator			A pointer to an initialised pkt_allocator
-	@param	pkt_size				The size of the memory you're passing
+	@param	tloc_allocator			A pointer to an initialised tloc_allocator
+	@param	tloc_size				The size of the memory you're passing
 	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to 
 									no free memory. If that happens then you may want to add a pool at that point.
 */
-PKT_API void *pkt_Allocate(pkt_allocator *allocator, pkt_size size);
+PKT_API void *tloc_Allocate(tloc_allocator *allocator, tloc_size size);
 
 /*
 	Try to reallocate an existing memory block within the allocator. If possible the current block will be merged with the physical neigbouring
-	block, otherwise a normal pkt_Allocate will take place and the data copied over to the new allocation.
+	block, otherwise a normal tloc_Allocate will take place and the data copied over to the new allocation.
 
-	@param	pkt_size				The size of the memory you're passing
+	@param	tloc_size				The size of the memory you're passing
 	@param	void*					A ptr to the current memory you're reallocating
 	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to
 									no free memory. If that happens then you may want to add a pool at that point.
 */
-PKT_API void *pkt_Reallocate(pkt_allocator *allocator, void *ptr, pkt_size size);
+PKT_API void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size);
 
 /*
-	Free an allocation from a pkt_allocator. When freeing a block of memory any adjacent free blocks are merged together to keep on top of 
+	Free an allocation from a tloc_allocator. When freeing a block of memory any adjacent free blocks are merged together to keep on top of 
 	fragmentation as much as possible. A check is also done to confirm that the block being freed is still valid and detect any memory corruption
 	due to out of bounds writing of this or potentially other blocks.  
 
-	It's recommended to call this function with an assert: PKT_ASSERT(pkt_Free(allocator, allocation));
+	It's recommended to call this function with an assert: PKT_ASSERT(tloc_Free(allocator, allocation));
 	An error is also output to console as long as PKT_OUTPUT_ERROR_MESSAGES is defined.
 
 	@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
 */
-PKT_API int pkt_Free(pkt_allocator *allocator, void *allocation);
+PKT_API int tloc_Free(tloc_allocator *allocator, void *allocation);
 
 /*
 	Remove a pool from an allocator. Note that all blocks in the pool must be free and therefore all merged together into one block (this happens
 	automatically as all blocks are freed are merged together into bigger blocks.
 
-	@param pkt_allocator*			A pointer to a tcoc_allocator that you want to reset
-	@param pkt_allocator*			A pointer to the memory pool that you want to free. You get this pointer when you add a pool to the allocator.
+	@param tloc_allocator*			A pointer to a tcoc_allocator that you want to reset
+	@param tloc_allocator*			A pointer to the memory pool that you want to free. You get this pointer when you add a pool to the allocator.
 */
-PKT_API pkt_bool pkt_RemovePool(pkt_allocator *allocator, pkt_pool *pool);
+PKT_API tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool);
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
 /*
 	Initialise an allocator and a pool at the same time and flag it for use as a remote memory manager. 
 	The data stucture to store the allocator will be stored at the beginning of the memory you pass to the function and the remaining memory will 
-	be used as the pool. Use with pkt_CalculateRemoteBlockPoolSize to allow for the number of memory ranges you might need to manage in the 
+	be used as the pool. Use with tloc_CalculateRemoteBlockPoolSize to allow for the number of memory ranges you might need to manage in the 
 	remote memory pool(s)
 
 	@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
-	@param	pkt_size				The size of the memory you're passing
-	@returns pkt_allocator*		A pointer to a pkt_allocator which you'll need to use when calling pkt_AllocateRemote or pkt_FreeRemote.
+	@param	tloc_size				The size of the memory you're passing
+	@returns tloc_allocator*		A pointer to a tloc_allocator which you'll need to use when calling tloc_AllocateRemote or tloc_FreeRemote.
 									If something went wrong then 0 is returned. Define PKT_OUTPUT_ERROR_MESSAGES before including this header
 									file to see any errors in the console.
 */
-PKT_API pkt_allocator *pkt_InitialiseAllocatorForRemote(void *memory, pkt_size size);
+PKT_API tloc_allocator *tloc_InitialiseAllocatorForRemote(void *memory, tloc_size size);
 
 /*
 	When using an allocator for managing remote memory, you need to set the size of the struct that you will be using to store information about
-	the remote block of memory. This will be like an extension the existing pkt_header.
+	the remote block of memory. This will be like an extension the existing tloc_header.
 
-	@param pkt_allocator*			A pointer to an initialised allocator
-	@param pkt_size				The size of the block extension. Will be aligned up to pkt__MEMORY_ALIGNMENT
+	@param tloc_allocator*			A pointer to an initialised allocator
+	@param tloc_size				The size of the block extension. Will be aligned up to tloc__MEMORY_ALIGNMENT
 */
-PKT_API void pkt_SetBlockExtensionSize(pkt_allocator *allocator, pkt_size size);
+PKT_API void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size);
 
 /*
 	When using an allocator for managing remote memory, you need to set the bytes per block that a block storing infomation about the remote 
@@ -438,51 +438,51 @@ PKT_API void pkt_SetBlockExtensionSize(pkt_allocator *allocator, pkt_size size);
 	Note that the lower the number the more memory you need to track remote memory blocks but the more granular it will be. It will depend alot
 	on the size of allocations you will need
 
-	@param pkt_allocator*			A pointer to an initialised allocator
-	@param pkt_size				The bytes per block you want it to be set to. Must be a power of 2
+	@param tloc_allocator*			A pointer to an initialised allocator
+	@param tloc_size				The bytes per block you want it to be set to. Must be a power of 2
 */
-PKT_API void pkt_SetBytesPerBlock(pkt_allocator *allocator, pkt_size size);
+PKT_API void tloc_SetBytesPerBlock(tloc_allocator *allocator, tloc_size size);
 
 /*
-	Free a remote allocation from a pkt_allocator. You must have set up merging callbacks so that you can update your block extensions with the
+	Free a remote allocation from a tloc_allocator. You must have set up merging callbacks so that you can update your block extensions with the
 	necessary buffer sizes and offsets
 
-	It's recommended to call this function with an assert: PKT_ASSERT(pkt_FreeRemote(allocator, allocation));
+	It's recommended to call this function with an assert: PKT_ASSERT(tloc_FreeRemote(allocator, allocation));
 	An error is also output to console as long as PKT_OUTPUT_ERROR_MESSAGES is defined.
 
 	@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
 */
-PKT_API int pkt_FreeRemote(pkt_allocator *allocator, void *allocation);
+PKT_API int tloc_FreeRemote(tloc_allocator *allocator, void *allocation);
 
 /*
 	Allocate some memory in a remote location from the normal heap. This is generally for allocating GPU memory.
 
-	@param	pkt_allocator			A pointer to an initialised pkt_allocator
-	@param	pkt_size				The size of the memory you're passing which should be the size of the block with the information about the
+	@param	tloc_allocator			A pointer to an initialised tloc_allocator
+	@param	tloc_size				The size of the memory you're passing which should be the size of the block with the information about the
 									buffer you're creating in the remote location
-	@param	pkt_size				The remote size of the memory you're passing
+	@param	tloc_size				The remote size of the memory you're passing
 	@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to
 									no free memory. If that happens then you may want to add a pool at that point.
 */
-PKT_API void *pkt_AllocateRemote(pkt_allocator *allocator, pkt_size remote_size);
+PKT_API void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_size);
 
 /*
 	Get the size of a block plus the block extension size so that you can use this to create an allocator pool to store all the blocks that will
-	track the remote memory. Be sure that you have already called and set the block extension size with pkt_SetBlockExtensionSize.
+	track the remote memory. Be sure that you have already called and set the block extension size with tloc_SetBlockExtensionSize.
 
-	@param	pkt_allocator			A pointer to an initialised pkt_allocator
-	@returns pkt_size				The size of the block
+	@param	tloc_allocator			A pointer to an initialised tloc_allocator
+	@returns tloc_size				The size of the block
 */
-PKT_API pkt_size pkt_CalculateRemoteBlockPoolSize(pkt_allocator *allocator, pkt_size remote_pool_size);
+PKT_API tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_allocator *allocator, tloc_size remote_pool_size);
 
-PKT_API void pkt_AddRemotePool(pkt_allocator *allocator, void *block_memory, pkt_size block_memory_size, pkt_size remote_pool_size);
+PKT_API void tloc_AddRemotePool(tloc_allocator *allocator, void *block_memory, tloc_size block_memory_size, tloc_size remote_pool_size);
 
-PKT_API static inline void* pkt_BlockUserExtensionPtr(const pkt_header *block) {
-	return (char*)block + sizeof(pkt_header);
+PKT_API static inline void* tloc_BlockUserExtensionPtr(const tloc_header *block) {
+	return (char*)block + sizeof(tloc_header);
 }
 
-PKT_API static inline void* pkt_AllocationFromExtensionPtr(const void *block) {
-	return (void*)((char*)block - pkt__MINIMUM_BLOCK_SIZE);
+PKT_API static inline void* tloc_AllocationFromExtensionPtr(const void *block) {
+	return (void*)((char*)block - tloc__MINIMUM_BLOCK_SIZE);
 }
 
 #endif
@@ -491,174 +491,174 @@ PKT_API static inline void* pkt_AllocationFromExtensionPtr(const void *block) {
 
 //Private inline functions, user doesn't need to call these
 
-static inline void pkt__map(pkt_size size, pkt_index *fli, pkt_index *sli) {
-	*fli = pkt__scan_reverse(size);
+static inline void tloc__map(tloc_size size, tloc_index *fli, tloc_index *sli) {
+	*fli = tloc__scan_reverse(size);
 	size = size & ~(1 << *fli);
-	*sli = (pkt_index)(size >> (*fli - pkt__SECOND_LEVEL_INDEX_LOG2)) % pkt__SECOND_LEVEL_INDEX_COUNT;
+	*sli = (tloc_index)(size >> (*fli - tloc__SECOND_LEVEL_INDEX_LOG2)) % tloc__SECOND_LEVEL_INDEX_COUNT;
 }
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
-static inline void pkt__null_merge_callback(void *user_data, pkt_header *block1, pkt_header *block2) { return; }
-static inline void pkt__null_split_callback(void *user_data, pkt_header *block, pkt_header *trimmed, pkt_size remote_size) { return; }
-static inline void pkt__null_add_pool_callback(void *user_data, void *block) { return; }
-static inline void pkt__null_unable_to_reallocate_callback(void *user_data, pkt_header *block, pkt_header *new_block) { return; }
-static inline pkt_size pkt__zero_size_adjust(pkt_size size, pkt_index alignment) { return 0; }
-static inline void pkt__unset_remote_block_limit_reached(pkt_allocator *allocator) { allocator->block_extension_size &= ~1; };
+static inline void tloc__null_merge_callback(void *user_data, tloc_header *block1, tloc_header *block2) { return; }
+static inline void tloc__null_split_callback(void *user_data, tloc_header *block, tloc_header *trimmed, tloc_size remote_size) { return; }
+static inline void tloc__null_add_pool_callback(void *user_data, void *block) { return; }
+static inline void tloc__null_unable_to_reallocate_callback(void *user_data, tloc_header *block, tloc_header *new_block) { return; }
+static inline tloc_size tloc__zero_size_adjust(tloc_size size, tloc_index alignment) { return 0; }
+static inline void tloc__unset_remote_block_limit_reached(tloc_allocator *allocator) { allocator->block_extension_size &= ~1; };
 #endif
 
 //Read only functions
-static inline pkt_bool pkt__has_free_block(const pkt_allocator *allocator, pkt_index fli, pkt_index sli) {
+static inline tloc_bool tloc__has_free_block(const tloc_allocator *allocator, tloc_index fli, tloc_index sli) {
 	return allocator->first_level_bitmap & (PKT_ONE << fli) && allocator->second_level_bitmaps[fli] & (1U << sli);
 }
 
-static inline pkt_bool pkt__is_used_block(const pkt_header *block) {
-	return !(block->size & pkt__BLOCK_IS_FREE);
+static inline tloc_bool tloc__is_used_block(const tloc_header *block) {
+	return !(block->size & tloc__BLOCK_IS_FREE);
 }
 
-static inline pkt_bool pkt__is_free_block(const pkt_header *block) {
-	return block->size & pkt__BLOCK_IS_FREE;
+static inline tloc_bool tloc__is_free_block(const tloc_header *block) {
+	return block->size & tloc__BLOCK_IS_FREE;
 }
 
-static inline pkt_bool pkt__prev_is_free_block(const pkt_header *block) {
-	return block->size & pkt__PREV_BLOCK_IS_FREE;
+static inline tloc_bool tloc__prev_is_free_block(const tloc_header *block) {
+	return block->size & tloc__PREV_BLOCK_IS_FREE;
 }
 
-static inline pkt_bool pkt__is_aligned(pkt_size size, pkt_size alignment) {
+static inline tloc_bool tloc__is_aligned(tloc_size size, tloc_size alignment) {
 	return (size % alignment) == 0;
 }
 
-static inline pkt_size pkt__align_size_down(pkt_size size, pkt_size alignment) {
+static inline tloc_size tloc__align_size_down(tloc_size size, tloc_size alignment) {
 	return size - (size % alignment);
 }
 
-static inline pkt_size pkt__align_size_up(pkt_size size, pkt_size alignment) {
-	pkt_size remainder = size % alignment;
+static inline tloc_size tloc__align_size_up(tloc_size size, tloc_size alignment) {
+	tloc_size remainder = size % alignment;
 	if (remainder != 0) {
 		size += alignment - remainder;
 	}
 	return size;
 }
 
-static inline pkt_size pkt__adjust_size(pkt_size size, pkt_index alignment) {
-	return pkt__Min(pkt__Max(pkt__align_size_up(size, alignment), pkt__MINIMUM_BLOCK_SIZE), pkt__MAXIMUM_BLOCK_SIZE);
+static inline tloc_size tloc__adjust_size(tloc_size size, tloc_index alignment) {
+	return tloc__Min(tloc__Max(tloc__align_size_up(size, alignment), tloc__MINIMUM_BLOCK_SIZE), tloc__MAXIMUM_BLOCK_SIZE);
 }
 
-static inline pkt_size pkt__block_size(const pkt_header *block) {
-	return block->size & ~(pkt__BLOCK_IS_FREE | pkt__PREV_BLOCK_IS_FREE);
+static inline tloc_size tloc__block_size(const tloc_header *block) {
+	return block->size & ~(tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);
 }
 
-static inline pkt_header *pkt__block_from_allocation(const void *allocation) {
-	return (pkt_header*)((char*)allocation - pkt__BLOCK_POINTER_OFFSET);
+static inline tloc_header *tloc__block_from_allocation(const void *allocation) {
+	return (tloc_header*)((char*)allocation - tloc__BLOCK_POINTER_OFFSET);
 }
 
-static inline pkt_header *pkt__null_block(pkt_allocator *allocator) {
+static inline tloc_header *tloc__null_block(tloc_allocator *allocator) {
 	return &allocator->null_block;
 }
 
-static inline void* pkt__block_user_ptr(const pkt_header *block) {
-	return (char*)block + pkt__BLOCK_POINTER_OFFSET;
+static inline void* tloc__block_user_ptr(const tloc_header *block) {
+	return (char*)block + tloc__BLOCK_POINTER_OFFSET;
 }
 
-static inline pkt_header* pkt__first_block_in_pool(const pkt_pool *pool) {
-	return (pkt_header*)((char*)pool - pkt__POINTER_SIZE);
+static inline tloc_header* tloc__first_block_in_pool(const tloc_pool *pool) {
+	return (tloc_header*)((char*)pool - tloc__POINTER_SIZE);
 }
 
-static inline pkt_header *pkt__next_physical_block(const pkt_header *block) {
-	return (pkt_header*)((char*)pkt__block_user_ptr(block) + pkt__block_size(block));
+static inline tloc_header *tloc__next_physical_block(const tloc_header *block) {
+	return (tloc_header*)((char*)tloc__block_user_ptr(block) + tloc__block_size(block));
 }
 
-static inline pkt_bool pkt__next_block_is_free(const pkt_header *block) {
-	return pkt__is_free_block(pkt__next_physical_block(block));
+static inline tloc_bool tloc__next_block_is_free(const tloc_header *block) {
+	return tloc__is_free_block(tloc__next_physical_block(block));
 }
 
-static inline pkt_header *pkt__allocator_first_block(pkt_allocator *allocator) {
-	return (pkt_header*)((char*)allocator + pkt_AllocatorSize() - pkt__POINTER_SIZE);
+static inline tloc_header *tloc__allocator_first_block(tloc_allocator *allocator) {
+	return (tloc_header*)((char*)allocator + tloc_AllocatorSize() - tloc__POINTER_SIZE);
 }
 
-static inline pkt_bool pkt__is_last_block_in_pool(const pkt_header *block) {
-	return pkt__block_size(block) == 0;
+static inline tloc_bool tloc__is_last_block_in_pool(const tloc_header *block) {
+	return tloc__block_size(block) == 0;
 }
 
-static inline pkt_index pkt__find_next_size_up(pkt_fl_bitmap map, pkt_uint start) {
+static inline tloc_index tloc__find_next_size_up(tloc_fl_bitmap map, tloc_uint start) {
 	//Mask out all bits up to the start point of the scan
 	map &= (~0ULL << (start + 1));
-	return pkt__scan_forward(map);
+	return tloc__scan_forward(map);
 }
 
 //Write functions
 #if defined(PKT_THREAD_SAFE)
 
-#define pkt__lock_thread_access												\
+#define tloc__lock_thread_access												\
 	if (allocator->access + allocator->access_override != 2) {					\
 		do {																	\
-		} while (0 != pkt__compare_and_exchange(&allocator->access, 1, 0));	\
+		} while (0 != tloc__compare_and_exchange(&allocator->access, 1, 0));	\
 	}																			\
 	PKT_ASSERT(allocator->access != 0);
 
-#define pkt__unlock_thread_access allocator->access_override = 0; allocator->access = 0;
-#define pkt__access_override allocator->access_override = 1;
+#define tloc__unlock_thread_access allocator->access_override = 0; allocator->access = 0;
+#define tloc__access_override allocator->access_override = 1;
 
 #else
 
-#define pkt__lock_thread_access
-#define pkt__unlock_thread_access 
-#define pkt__access_override
+#define tloc__lock_thread_access
+#define tloc__unlock_thread_access 
+#define tloc__access_override
 
 #endif
-void *pkt__allocate(pkt_allocator *allocator, pkt_size size, pkt_size remote_size);
+void *tloc__allocate(tloc_allocator *allocator, tloc_size size, tloc_size remote_size);
 
-static inline void pkt__set_block_size(pkt_header *block, pkt_size size) {
-	pkt_size boundary_tag = block->size & (pkt__BLOCK_IS_FREE | pkt__PREV_BLOCK_IS_FREE);
+static inline void tloc__set_block_size(tloc_header *block, tloc_size size) {
+	tloc_size boundary_tag = block->size & (tloc__BLOCK_IS_FREE | tloc__PREV_BLOCK_IS_FREE);
 	block->size = size | boundary_tag;
 }
 
-static inline void pkt__set_prev_physical_block(pkt_header *block, pkt_header *prev_block) {
+static inline void tloc__set_prev_physical_block(tloc_header *block, tloc_header *prev_block) {
 	block->prev_physical_block = prev_block;
 }
 
-static inline void pkt__zero_block(pkt_header *block) {
+static inline void tloc__zero_block(tloc_header *block) {
 	block->prev_physical_block = 0;
 	block->size = 0;
 }
 
-static inline void pkt__mark_block_as_used(pkt_header *block) {
-	block->size &= ~pkt__BLOCK_IS_FREE;
-	pkt_header *next_block = pkt__next_physical_block(block);
-	next_block->size &= ~pkt__PREV_BLOCK_IS_FREE;
+static inline void tloc__mark_block_as_used(tloc_header *block) {
+	block->size &= ~tloc__BLOCK_IS_FREE;
+	tloc_header *next_block = tloc__next_physical_block(block);
+	next_block->size &= ~tloc__PREV_BLOCK_IS_FREE;
 }
 
-static inline void pkt__mark_block_as_free(pkt_header *block) {
-	block->size |= pkt__BLOCK_IS_FREE;
-	pkt_header *next_block = pkt__next_physical_block(block);
-	next_block->size |= pkt__PREV_BLOCK_IS_FREE;
+static inline void tloc__mark_block_as_free(tloc_header *block) {
+	block->size |= tloc__BLOCK_IS_FREE;
+	tloc_header *next_block = tloc__next_physical_block(block);
+	next_block->size |= tloc__PREV_BLOCK_IS_FREE;
 }
 
-static inline void pkt__block_set_used(pkt_header *block) {
-	block->size &= ~pkt__BLOCK_IS_FREE;
+static inline void tloc__block_set_used(tloc_header *block) {
+	block->size &= ~tloc__BLOCK_IS_FREE;
 }
 
-static inline void pkt__block_set_free(pkt_header *block) {
-	block->size |= pkt__BLOCK_IS_FREE;
+static inline void tloc__block_set_free(tloc_header *block) {
+	block->size |= tloc__BLOCK_IS_FREE;
 }
 
-static inline void pkt__block_set_prev_used(pkt_header *block) {
-	block->size &= ~pkt__PREV_BLOCK_IS_FREE;
+static inline void tloc__block_set_prev_used(tloc_header *block) {
+	block->size &= ~tloc__PREV_BLOCK_IS_FREE;
 }
 
-static inline void pkt__block_set_prev_free(pkt_header *block) {
-	block->size |= pkt__PREV_BLOCK_IS_FREE;
+static inline void tloc__block_set_prev_free(tloc_header *block) {
+	block->size |= tloc__PREV_BLOCK_IS_FREE;
 }
 
 /*
-	Push a block onto the segregated list of free blocks. Called when pkt_Free is called. Generally blocks are
+	Push a block onto the segregated list of free blocks. Called when tloc_Free is called. Generally blocks are
 	merged if possible before this is called
 */
-static inline void pkt__push_block(pkt_allocator *allocator, pkt_header *block) {
-	pkt_index fli;
-	pkt_index sli;
+static inline void tloc__push_block(tloc_allocator *allocator, tloc_header *block) {
+	tloc_index fli;
+	tloc_index sli;
 	//Get the size class of the block
-	pkt__map(pkt__do_size_class_callback(block), &fli, &sli);
-	pkt_header *current_block_in_free_list = allocator->segregated_lists[fli][sli];
+	tloc__map(tloc__do_size_class_callback(block), &fli, &sli);
+	tloc_header *current_block_in_free_list = allocator->segregated_lists[fli][sli];
 	//Insert the block into the list by updating the next and prev free blocks of
 	//this and the current block in the free list. The current block in the free
 	//list may well be the null_block in the allocator so this just means that this
@@ -671,16 +671,16 @@ static inline void pkt__push_block(pkt_allocator *allocator, pkt_header *block) 
 	//Flag the bitmaps to mark that this size class now contains a free block
 	allocator->first_level_bitmap |= PKT_ONE << fli;
 	allocator->second_level_bitmaps[fli] |= 1 << sli;
-	pkt__mark_block_as_free(block);
+	tloc__mark_block_as_free(block);
 }
 
 /*
 	Remove a block from the segregated list in the allocator and return it. If there is a next free block in the size class
 	then move it down the list, otherwise unflag the bitmaps as necessary. This is only called when we're trying to allocate
-	some memory with pkt_Allocate and we've determined that there's a suitable free block in segregated_lists.
+	some memory with tloc_Allocate and we've determined that there's a suitable free block in segregated_lists.
 */
-static inline pkt_header *pkt__pop_block(pkt_allocator *allocator, pkt_index fli, pkt_index sli) {
-	pkt_header *block = allocator->segregated_lists[fli][sli];
+static inline tloc_header *tloc__pop_block(tloc_allocator *allocator, tloc_index fli, tloc_index sli) {
+	tloc_header *block = allocator->segregated_lists[fli][sli];
 
 	//If the block in the segregated list is actually the null_block then something went very wrong.
 	//Somehow the segregated lists had the end block assigned but the first or second level bitmaps
@@ -689,18 +689,18 @@ static inline pkt_header *pkt__pop_block(pkt_allocator *allocator, pkt_index fli
 	if (block->next_free_block != &allocator->null_block) {
 		//If there are more free blocks in this size class then shift the next one down and terminate the prev_free_block
 		allocator->segregated_lists[fli][sli] = block->next_free_block;
-		allocator->segregated_lists[fli][sli]->prev_free_block = pkt__null_block(allocator);
+		allocator->segregated_lists[fli][sli]->prev_free_block = tloc__null_block(allocator);
 	}
 	else {
 		//There's no more free blocks in this size class so flag the second level bitmap for this class to 0.
-		allocator->segregated_lists[fli][sli] = pkt__null_block(allocator);
+		allocator->segregated_lists[fli][sli] = tloc__null_block(allocator);
 		allocator->second_level_bitmaps[fli] &= ~(1 << sli);
 		if (allocator->second_level_bitmaps[fli] == 0) {
 			//And if the second level bitmap is 0 then the corresponding bit in the first lebel can be zero'd too.
 			allocator->first_level_bitmap &= ~(PKT_ONE << fli);
 		}
 	}
-	pkt__mark_block_as_used(block);
+	tloc__mark_block_as_used(block);
 	return block;
 }
 
@@ -708,84 +708,84 @@ static inline pkt_header *pkt__pop_block(pkt_allocator *allocator, pkt_index fli
 	Remove a block from the segregated list. This is only called when we're merging blocks together. The block is
 	just removed from the list and marked as used and then merged with an adjacent block.
 */
-static inline void pkt__remove_block_from_segregated_list(pkt_allocator *allocator, pkt_header *block) {
-	pkt_index fli, sli;
+static inline void tloc__remove_block_from_segregated_list(tloc_allocator *allocator, tloc_header *block) {
+	tloc_index fli, sli;
 	//Get the size class
-	pkt__map(pkt__do_size_class_callback(block), &fli, &sli);
-	pkt_header *prev_block = block->prev_free_block;
-	pkt_header *next_block = block->next_free_block;
+	tloc__map(tloc__do_size_class_callback(block), &fli, &sli);
+	tloc_header *prev_block = block->prev_free_block;
+	tloc_header *next_block = block->next_free_block;
 	PKT_ASSERT(prev_block);
 	PKT_ASSERT(next_block);
 	next_block->prev_free_block = prev_block;
 	prev_block->next_free_block = next_block;
 	if (allocator->segregated_lists[fli][sli] == block) {
 		allocator->segregated_lists[fli][sli] = next_block;
-		if (next_block == pkt__null_block(allocator)) {
+		if (next_block == tloc__null_block(allocator)) {
 			allocator->second_level_bitmaps[fli] &= ~(1U << sli);
 			if (allocator->second_level_bitmaps[fli] == 0) {
-				allocator->first_level_bitmap &= ~(1U << fli);
+				allocator->first_level_bitmap &= ~(1ULL << fli);
 			}
 		}
 	}
-	pkt__mark_block_as_used(block);
+	tloc__mark_block_as_used(block);
 }
 
 /*
-	This function is called when pkt_Allocate is called. Once a free block is found then it will be split
+	This function is called when tloc_Allocate is called. Once a free block is found then it will be split
 	if the size + header overhead + the minimum block size (16b) is greater then the size of the free block.
 	If not then it simply returns the free block as it is without splitting. 
 	If split then the trimmed amount is added back to the segregated list of free blocks.
 */
-static inline void *pkt__maybe_split_block(pkt_allocator *allocator, pkt_header *block, pkt_size size, pkt_size remote_size) {
-	PKT_ASSERT(!pkt__is_last_block_in_pool(block));
-	pkt_size size_plus_overhead = size + pkt__BLOCK_POINTER_OFFSET + pkt__block_extension_size;
-	if (size_plus_overhead + pkt__MINIMUM_BLOCK_SIZE >= pkt__block_size(block) - pkt__block_extension_size) {
-		return (void*)((char*)block + pkt__BLOCK_POINTER_OFFSET);
+static inline void *tloc__maybe_split_block(tloc_allocator *allocator, tloc_header *block, tloc_size size, tloc_size remote_size) {
+	PKT_ASSERT(!tloc__is_last_block_in_pool(block));
+	tloc_size size_plus_overhead = size + tloc__BLOCK_POINTER_OFFSET + tloc__block_extension_size;
+	if (size_plus_overhead + tloc__MINIMUM_BLOCK_SIZE >= tloc__block_size(block) - tloc__block_extension_size) {
+		return (void*)((char*)block + tloc__BLOCK_POINTER_OFFSET);
 	}
-	pkt_header *trimmed = (pkt_header*)((char*)pkt__block_user_ptr(block) + size + pkt__block_extension_size);
+	tloc_header *trimmed = (tloc_header*)((char*)tloc__block_user_ptr(block) + size + tloc__block_extension_size);
 	trimmed->size = 0;
-	pkt__set_block_size(trimmed, pkt__block_size(block) - size_plus_overhead);
-	pkt_header *next_block = pkt__next_physical_block(block);
-	pkt__set_prev_physical_block(next_block, trimmed);
-	pkt__set_prev_physical_block(trimmed, block);
-	pkt__set_block_size(block, size + pkt__block_extension_size);
-	pkt__do_split_block_callback;
-	pkt__push_block(allocator, trimmed);
-	return (void*)((char*)block + pkt__BLOCK_POINTER_OFFSET);
+	tloc__set_block_size(trimmed, tloc__block_size(block) - size_plus_overhead);
+	tloc_header *next_block = tloc__next_physical_block(block);
+	tloc__set_prev_physical_block(next_block, trimmed);
+	tloc__set_prev_physical_block(trimmed, block);
+	tloc__set_block_size(block, size + tloc__block_extension_size);
+	tloc__do_split_block_callback;
+	tloc__push_block(allocator, trimmed);
+	return (void*)((char*)block + tloc__BLOCK_POINTER_OFFSET);
 }
 
 /*
-	This function is called when pkt_Free is called and the previous physical block is free. If that's the case
+	This function is called when tloc_Free is called and the previous physical block is free. If that's the case
 	then this function will merge the block being freed with the previous physical block then add that back into 
-	the segregated list of free blocks. Note that that happens in the pkt_Free function after attempting to merge
+	the segregated list of free blocks. Note that that happens in the tloc_Free function after attempting to merge
 	both ways.
 */
-static inline pkt_header *pkt__merge_with_prev_block(pkt_allocator *allocator, pkt_header *block) {
-	PKT_ASSERT(!pkt__is_last_block_in_pool(block));
-	pkt_header *prev_block = block->prev_physical_block;
-	pkt__remove_block_from_segregated_list(allocator, prev_block);
-	pkt__do_merge_prev_callback;
-	pkt__set_block_size(prev_block, pkt__block_size(prev_block) + pkt__block_size(block) + pkt__BLOCK_POINTER_OFFSET);
-	pkt_header *next_block = pkt__next_physical_block(block);
-	pkt__set_prev_physical_block(next_block, prev_block);
-	pkt__zero_block(block);
+static inline tloc_header *tloc__merge_with_prev_block(tloc_allocator *allocator, tloc_header *block) {
+	PKT_ASSERT(!tloc__is_last_block_in_pool(block));
+	tloc_header *prev_block = block->prev_physical_block;
+	tloc__remove_block_from_segregated_list(allocator, prev_block);
+	tloc__do_merge_prev_callback;
+	tloc__set_block_size(prev_block, tloc__block_size(prev_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
+	tloc_header *next_block = tloc__next_physical_block(block);
+	tloc__set_prev_physical_block(next_block, prev_block);
+	tloc__zero_block(block);
 	return prev_block;
 }
 
 /*
-	This function might be called when pkt_Free is called to free a block. If the block being freed is not the last 
+	This function might be called when tloc_Free is called to free a block. If the block being freed is not the last 
 	physical block then this function is called and if the next block is free then it will be merged.
 */
-static inline void pkt__merge_with_next_block(pkt_allocator *allocator, pkt_header *block) {
-	pkt_header *next_block = pkt__next_physical_block(block);
+static inline void tloc__merge_with_next_block(tloc_allocator *allocator, tloc_header *block) {
+	tloc_header *next_block = tloc__next_physical_block(block);
 	PKT_ASSERT(next_block->prev_physical_block == block);	//could be potentional memory corruption. Check that you're not writing outside the boundary of the block size
-	PKT_ASSERT(!pkt__is_last_block_in_pool(next_block));
-	pkt__remove_block_from_segregated_list(allocator, next_block);
-	pkt__do_merge_next_callback;
-	pkt__set_block_size(block, pkt__block_size(next_block) + pkt__block_size(block) + pkt__BLOCK_POINTER_OFFSET);
-	pkt_header *block_after_next = pkt__next_physical_block(next_block);
-	pkt__set_prev_physical_block(block_after_next, block);
-	pkt__zero_block(next_block);
+	PKT_ASSERT(!tloc__is_last_block_in_pool(next_block));
+	tloc__remove_block_from_segregated_list(allocator, next_block);
+	tloc__do_merge_next_callback;
+	tloc__set_block_size(block, tloc__block_size(next_block) + tloc__block_size(block) + tloc__BLOCK_POINTER_OFFSET);
+	tloc_header *block_after_next = tloc__next_physical_block(next_block);
+	tloc__set_prev_physical_block(block_after_next, block);
+	tloc__zero_block(next_block);
 }
 //--End of internal functions
 
@@ -806,99 +806,99 @@ static inline void pkt__merge_with_next_block(pkt_allocator *allocator, pkt_head
 #include <string.h>
 
 //Definitions
-pkt_allocator *pkt_InitialiseAllocator(void *memory) {
+tloc_allocator *tloc_InitialiseAllocator(void *memory) {
 	if (!memory) {
 		PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", PKT_ERROR_NAME);
 		return 0;
 	}
 
-	pkt_allocator *allocator = (pkt_allocator*)memory;
-	memset(allocator, 0, sizeof(pkt_allocator));
+	tloc_allocator *allocator = (tloc_allocator*)memory;
+	memset(allocator, 0, sizeof(tloc_allocator));
 	allocator->null_block.next_free_block = &allocator->null_block;
 	allocator->null_block.prev_free_block = &allocator->null_block;
 
 	//Point all of the segregated list array pointers to the empty block
-	for (pkt_uint i = 0; i < pkt__FIRST_LEVEL_INDEX_COUNT; i++) {
-		for (pkt_uint j = 0; j < pkt__SECOND_LEVEL_INDEX_COUNT; j++) {
+	for (tloc_uint i = 0; i < tloc__FIRST_LEVEL_INDEX_COUNT; i++) {
+		for (tloc_uint j = 0; j < tloc__SECOND_LEVEL_INDEX_COUNT; j++) {
 			allocator->segregated_lists[i][j] = &allocator->null_block;
 		}
 	}
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
-	allocator->get_block_size_callback = pkt__block_size;
-	allocator->merge_next_callback = pkt__null_merge_callback;
-	allocator->merge_prev_callback = pkt__null_merge_callback;
-	allocator->split_block_callback = pkt__null_split_callback;
-	allocator->add_pool_callback = pkt__null_add_pool_callback;
-	allocator->unable_to_reallocate_callback = pkt__null_unable_to_reallocate_callback;
-	allocator->adjust_size_callback = pkt__adjust_size;
+	allocator->get_block_size_callback = tloc__block_size;
+	allocator->merge_next_callback = tloc__null_merge_callback;
+	allocator->merge_prev_callback = tloc__null_merge_callback;
+	allocator->split_block_callback = tloc__null_split_callback;
+	allocator->add_pool_callback = tloc__null_add_pool_callback;
+	allocator->unable_to_reallocate_callback = tloc__null_unable_to_reallocate_callback;
+	allocator->adjust_size_callback = tloc__adjust_size;
 #endif
 
 	return allocator;
 }
 
-pkt_allocator *pkt_InitialiseAllocatorWithPool(void *memory, pkt_size size) {
-	pkt_size array_offset = sizeof(pkt_allocator);
-	if (size < array_offset + pkt__MEMORY_ALIGNMENT) {
-		PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: Tried to initialise allocator with a memory allocation that is too small. Must be at least: %zi bytes\n", PKT_ERROR_NAME, array_offset + pkt__MEMORY_ALIGNMENT);
+tloc_allocator *tloc_InitialiseAllocatorWithPool(void *memory, tloc_size size) {
+	tloc_size array_offset = sizeof(tloc_allocator);
+	if (size < array_offset + tloc__MEMORY_ALIGNMENT) {
+		PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: Tried to initialise allocator with a memory allocation that is too small. Must be at least: %zi bytes\n", PKT_ERROR_NAME, array_offset + tloc__MEMORY_ALIGNMENT);
 		return 0;
 	}
 
-	pkt_allocator *allocator = pkt_InitialiseAllocator(memory);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory);
 	if (!allocator) {
 		return 0;
 	}
-	pkt_AddPool(allocator, pkt_GetPool(allocator), size - pkt_AllocatorSize());
+	tloc_AddPool(allocator, tloc_GetPool(allocator), size - tloc_AllocatorSize());
 	return allocator;
 }
 
-pkt_size pkt_AllocatorSize(void) {
-	return sizeof(pkt_allocator);
+tloc_size tloc_AllocatorSize(void) {
+	return sizeof(tloc_allocator);
 }
 
-pkt_pool *pkt_GetPool(pkt_allocator *allocator) {
-	return (void*)((char*)allocator + pkt_AllocatorSize());
+tloc_pool *tloc_GetPool(tloc_allocator *allocator) {
+	return (void*)((char*)allocator + tloc_AllocatorSize());
 }
 
-pkt_pool *pkt_AddPool(pkt_allocator *allocator, void *memory, pkt_size size) {
-	pkt__lock_thread_access;
+tloc_pool *tloc_AddPool(tloc_allocator *allocator, void *memory, tloc_size size) {
+	tloc__lock_thread_access;
 
 	//Offset it back by the pointer size, we don't need the prev_physical block pointer as there is none
 	//for the first block in the pool
-	pkt_header *block = pkt__first_block_in_pool(memory);
+	tloc_header *block = tloc__first_block_in_pool(memory);
 	block->size = 0;
 	//Leave room for an end block
-	pkt__set_block_size(block, size - (pkt__BLOCK_POINTER_OFFSET) - pkt__BLOCK_SIZE_OVERHEAD);
+	tloc__set_block_size(block, size - (tloc__BLOCK_POINTER_OFFSET) - tloc__BLOCK_SIZE_OVERHEAD);
 
 	//Make sure it aligns
-	pkt__set_block_size(block, pkt__align_size_down(pkt__block_size(block), pkt__MEMORY_ALIGNMENT));
-	PKT_ASSERT(pkt__block_size(block) > pkt__MINIMUM_BLOCK_SIZE);
-	pkt__block_set_free(block);
-	pkt__block_set_prev_used(block);
+	tloc__set_block_size(block, tloc__align_size_down(tloc__block_size(block), tloc__MEMORY_ALIGNMENT));
+	PKT_ASSERT(tloc__block_size(block) > tloc__MINIMUM_BLOCK_SIZE);
+	tloc__block_set_free(block);
+	tloc__block_set_prev_used(block);
 
 	//Add a 0 sized block at the end of the pool to cap it off
-	pkt_header *last_block = pkt__next_physical_block(block);
+	tloc_header *last_block = tloc__next_physical_block(block);
 	last_block->size = 0;
-	pkt__block_set_used(last_block);
+	tloc__block_set_used(last_block);
 
 	last_block->prev_physical_block = block;
-	pkt__push_block(allocator, block);
+	tloc__push_block(allocator, block);
 
-	pkt__unlock_thread_access;
+	tloc__unlock_thread_access;
 	return memory;
 }
 
-pkt_bool pkt_RemovePool(pkt_allocator *allocator, pkt_pool *pool) {
-	pkt__lock_thread_access;
-	pkt_header *block = pkt__first_block_in_pool(pool);
+tloc_bool tloc_RemovePool(tloc_allocator *allocator, tloc_pool *pool) {
+	tloc__lock_thread_access;
+	tloc_header *block = tloc__first_block_in_pool(pool);
 	
-	if (pkt__is_free_block(block) && !pkt__next_block_is_free(block) && pkt__is_last_block_in_pool(pkt__next_physical_block(block))) {
-		pkt__remove_block_from_segregated_list(allocator, block);
-		pkt__unlock_thread_access;
+	if (tloc__is_free_block(block) && !tloc__next_block_is_free(block) && tloc__is_last_block_in_pool(tloc__next_physical_block(block))) {
+		tloc__remove_block_from_segregated_list(allocator, block);
+		tloc__unlock_thread_access;
 		return 1;
 	}
 #if defined(PKT_THREAD_SAFE)
-	pkt__unlock_thread_access;
+	tloc__unlock_thread_access;
 	PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: In order to remove a pool there must be only 1 free block in the pool. Was possibly freed by another thread\n", PKT_ERROR_NAME);
 #else
 	PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: In order to remove a pool there must be only 1 free block in the pool.\n", PKT_ERROR_NAME);
@@ -907,136 +907,136 @@ pkt_bool pkt_RemovePool(pkt_allocator *allocator, pkt_pool *pool) {
 }
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
-void *pkt__allocate(pkt_allocator *allocator, pkt_size size, pkt_size remote_size) {
+void *tloc__allocate(tloc_allocator *allocator, tloc_size size, tloc_size remote_size) {
 #else
-void *pkt_Allocate(pkt_allocator *allocator, pkt_size size) {
+void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
 #endif
-	pkt__lock_thread_access;
-	pkt_index fli;
-	pkt_index sli;
-	size = pkt__adjust_size(size, pkt__MEMORY_ALIGNMENT);
-	pkt__map(pkt__map_size, &fli, &sli);
+	tloc__lock_thread_access;
+	tloc_index fli;
+	tloc_index sli;
+	size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
+	tloc__map(tloc__map_size, &fli, &sli);
 	//Note that there may well be an appropriate size block in the class but that block may not be at the head of the list
 	//In this situation we could opt to loop through the list of the size class to see if there is an appropriate size but instead
 	//we stick to the paper and just move on to the next class up to keep a O1 speed at the cost of some extra fragmentation
-	if (pkt__has_free_block(allocator, fli, sli) && pkt__block_size(allocator->segregated_lists[fli][sli]) >= pkt__map_size) {
-		void *user_ptr = pkt__block_user_ptr(pkt__pop_block(allocator, fli, sli));
-		pkt__unlock_thread_access;
+	if (tloc__has_free_block(allocator, fli, sli) && tloc__block_size(allocator->segregated_lists[fli][sli]) >= tloc__map_size) {
+		void *user_ptr = tloc__block_user_ptr(tloc__pop_block(allocator, fli, sli));
+		tloc__unlock_thread_access;
 		return user_ptr;
 	}
-	if (sli == pkt__SECOND_LEVEL_INDEX_COUNT - 1) {
+	if (sli == tloc__SECOND_LEVEL_INDEX_COUNT - 1) {
 		sli = -1;
 	}
 	else {
-		sli = pkt__find_next_size_up(allocator->second_level_bitmaps[fli], sli);
+		sli = tloc__find_next_size_up(allocator->second_level_bitmaps[fli], sli);
 	}
 	if (sli == -1) {
-		fli = pkt__find_next_size_up(allocator->first_level_bitmap, fli);
+		fli = tloc__find_next_size_up(allocator->first_level_bitmap, fli);
 		if (fli > -1) {
-			sli = pkt__scan_forward(allocator->second_level_bitmaps[fli]);
-			pkt_header *block = pkt__pop_block(allocator, fli, sli);
-			pkt__maybe_assert_block_size;
-			void *allocation = pkt__call_maybe_split_block;
-			pkt__unlock_thread_access;
+			sli = tloc__scan_forward(allocator->second_level_bitmaps[fli]);
+			tloc_header *block = tloc__pop_block(allocator, fli, sli);
+			tloc__maybe_assert_block_size;
+			void *allocation = tloc__call_maybe_split_block;
+			tloc__unlock_thread_access;
 			return allocation;
 		}
 	}
 	else {
-		pkt_header *block = pkt__pop_block(allocator, fli, sli);
-		pkt__maybe_assert_block_size;
-		void *allocation = pkt__call_maybe_split_block;
-		pkt__unlock_thread_access;
+		tloc_header *block = tloc__pop_block(allocator, fli, sli);
+		tloc__maybe_assert_block_size;
+		void *allocation = tloc__call_maybe_split_block;
+		tloc__unlock_thread_access;
 		return allocation;
 	}
 	//Out of memory;
-	PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: Not enough memory in pool to allocate %zu bytes\n", PKT_ERROR_NAME, pkt__map_size);
-	pkt__unlock_thread_access;
+	PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: Not enough memory in pool to allocate %zu bytes\n", PKT_ERROR_NAME, tloc__map_size);
+	tloc__unlock_thread_access;
 	return 0;
 }
 
-void *pkt_Reallocate(pkt_allocator *allocator, void *ptr, pkt_size size) {
-	pkt__lock_thread_access;
+void *tloc_Reallocate(tloc_allocator *allocator, void *ptr, tloc_size size) {
+	tloc__lock_thread_access;
 
 	if (ptr && size == 0) {
-		pkt__unlock_thread_access;
-		pkt_Free(allocator, ptr);
+		tloc__unlock_thread_access;
+		tloc_Free(allocator, ptr);
 	}
 
 	if (!ptr) {
-		pkt__unlock_thread_access;
-		return pkt_Allocate(allocator, size);
+		tloc__unlock_thread_access;
+		return tloc_Allocate(allocator, size);
 	}
 
-	pkt_header *block = pkt__block_from_allocation(ptr);
-	pkt_header *next_block = pkt__next_physical_block(block);
+	tloc_header *block = tloc__block_from_allocation(ptr);
+	tloc_header *next_block = tloc__next_physical_block(block);
 	void *allocation = 0;
-	pkt_size current_size = pkt__block_size(block);
-	pkt_size adjusted_size = pkt__adjust_size(size, pkt__MEMORY_ALIGNMENT);
-	pkt_size combined_size = current_size + pkt__block_size(next_block);
-	if ((!pkt__next_block_is_free(block) || adjusted_size > combined_size) && adjusted_size > current_size) {
-		pkt__access_override;
-		allocation = pkt_Allocate(allocator, size);
+	tloc_size current_size = tloc__block_size(block);
+	tloc_size adjusted_size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
+	tloc_size combined_size = current_size + tloc__block_size(next_block);
+	if ((!tloc__next_block_is_free(block) || adjusted_size > combined_size) && adjusted_size > current_size) {
+		tloc__access_override;
+		allocation = tloc_Allocate(allocator, size);
 		if (allocation) {
-			pkt_size smallest_size = pkt__Min(current_size, size);
+			tloc_size smallest_size = tloc__Min(current_size, size);
 			memcpy(allocation, ptr, smallest_size);
-			pkt__do_unable_to_reallocate_callback;
-			pkt_Free(allocator, ptr);
+			tloc__do_unable_to_reallocate_callback;
+			tloc_Free(allocator, ptr);
 		}
 	}
 	else {
 		//Reallocation is possible
 		if (adjusted_size > current_size)
 		{
-			pkt__merge_with_next_block(allocator, block);
-			pkt__mark_block_as_used(block);
+			tloc__merge_with_next_block(allocator, block);
+			tloc__mark_block_as_used(block);
 		}
-		allocation = pkt__maybe_split_block(allocator, block, adjusted_size, 0);
+		allocation = tloc__maybe_split_block(allocator, block, adjusted_size, 0);
 	}
 
-	pkt__unlock_thread_access;
+	tloc__unlock_thread_access;
 	return allocation;
 }
 
-int pkt_Free(pkt_allocator *allocator, void* allocation) {
+int tloc_Free(tloc_allocator *allocator, void* allocation) {
 	if (!allocation) return 0;
-	pkt__lock_thread_access;
-	pkt_header *block = pkt__block_from_allocation(allocation);
-	if (pkt__prev_is_free_block(block)) {
+	tloc__lock_thread_access;
+	tloc_header *block = tloc__block_from_allocation(allocation);
+	if (tloc__prev_is_free_block(block)) {
 		PKT_ASSERT(block->prev_physical_block);		//Must be a valid previous physical block
-		block = pkt__merge_with_prev_block(allocator, block);
+		block = tloc__merge_with_prev_block(allocator, block);
 	}
-	if (pkt__next_block_is_free(block)) {
-		pkt__merge_with_next_block(allocator, block);
+	if (tloc__next_block_is_free(block)) {
+		tloc__merge_with_next_block(allocator, block);
 	}
-	pkt__push_block(allocator, block);
-	pkt__unlock_thread_access;
+	tloc__push_block(allocator, block);
+	tloc__unlock_thread_access;
 	return 1;
 }
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
-void *pkt_Allocate(pkt_allocator *allocator, pkt_size size) {
-	return pkt__allocate(allocator, size, 0);
+void *tloc_Allocate(tloc_allocator *allocator, tloc_size size) {
+	return tloc__allocate(allocator, size, 0);
 }
 
-void pkt_SetBlockExtensionSize(pkt_allocator *allocator, pkt_size size) {
+void tloc_SetBlockExtensionSize(tloc_allocator *allocator, tloc_size size) {
 	PKT_ASSERT(allocator->block_extension_size == 0);	//You cannot change this once set
-	allocator->block_extension_size = pkt__align_size_up(size, pkt__MEMORY_ALIGNMENT);
-	allocator->adjust_size_callback = pkt__zero_size_adjust;
+	allocator->block_extension_size = tloc__align_size_up(size, tloc__MEMORY_ALIGNMENT);
+	allocator->adjust_size_callback = tloc__zero_size_adjust;
 }
 
-void pkt_SetBytesPerBlock(pkt_allocator *allocator, pkt_size size) {
+void tloc_SetBytesPerBlock(tloc_allocator *allocator, tloc_size size) {
 	PKT_ASSERT(allocator->bytes_per_block == 0);		//You cannot change this once set
-	PKT_ASSERT(pkt__is_pow2(size));					//Size must be a power of 2
+	PKT_ASSERT(tloc__is_pow2(size));					//Size must be a power of 2
 	allocator->bytes_per_block = size;
 }
 
-pkt_size pkt_CalculateRemoteBlockPoolSize(pkt_allocator *allocator, pkt_size remote_pool_size) {
+tloc_size tloc_CalculateRemoteBlockPoolSize(tloc_allocator *allocator, tloc_size remote_pool_size) {
 	PKT_ASSERT(allocator->block_extension_size);	//You must set the block extension size first
 	PKT_ASSERT(allocator->bytes_per_block);		//You must set the number of bytes per block
-	return (sizeof(pkt_header) + allocator->block_extension_size) * (remote_pool_size / allocator->bytes_per_block) + pkt__BLOCK_POINTER_OFFSET;
+	return (sizeof(tloc_header) + allocator->block_extension_size) * (remote_pool_size / allocator->bytes_per_block) + tloc__BLOCK_POINTER_OFFSET;
 }
 
-void pkt_AddRemotePool(pkt_allocator *allocator, void *block_memory, pkt_size block_memory_size, pkt_size remote_pool_size) {
+void tloc_AddRemotePool(tloc_allocator *allocator, void *block_memory, tloc_size block_memory_size, tloc_size remote_pool_size) {
 	PKT_ASSERT(allocator->add_pool_callback);	//You must set all the necessary callbacks to handle remote memory management
 	PKT_ASSERT(allocator->get_block_size_callback);
 	PKT_ASSERT(allocator->merge_next_callback);
@@ -1044,86 +1044,86 @@ void pkt_AddRemotePool(pkt_allocator *allocator, void *block_memory, pkt_size bl
 	PKT_ASSERT(allocator->split_block_callback);
 	PKT_ASSERT(allocator->adjust_size_callback);
 
-	void *block = pkt_BlockUserExtensionPtr(pkt__first_block_in_pool(block_memory));
-	pkt__do_add_pool_callback;
-	pkt_AddPool(allocator, block_memory, block_memory_size);
+	void *block = tloc_BlockUserExtensionPtr(tloc__first_block_in_pool(block_memory));
+	tloc__do_add_pool_callback;
+	tloc_AddPool(allocator, block_memory, block_memory_size);
 }
 
-pkt_allocator *pkt_InitialiseAllocatorForRemote(void *memory, pkt_size size) {
-	pkt_size array_offset = sizeof(pkt_allocator);
-	if (size < array_offset + pkt__MEMORY_ALIGNMENT) {
-		PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: Tried to initialise allocator with a memory allocation that is too small. Must be at least: %zi bytes\n", PKT_ERROR_NAME, array_offset + pkt__MEMORY_ALIGNMENT);
+tloc_allocator *tloc_InitialiseAllocatorForRemote(void *memory, tloc_size size) {
+	tloc_size array_offset = sizeof(tloc_allocator);
+	if (size < array_offset + tloc__MEMORY_ALIGNMENT) {
+		PKT_PRINT_ERROR(PKT_ERROR_COLOR"%s: Tried to initialise allocator with a memory allocation that is too small. Must be at least: %zi bytes\n", PKT_ERROR_NAME, array_offset + tloc__MEMORY_ALIGNMENT);
 		return 0;
 	}
 
-	pkt_allocator *allocator = pkt_InitialiseAllocator(memory);
+	tloc_allocator *allocator = tloc_InitialiseAllocator(memory);
 	if (!allocator) {
 		return 0;
 	}
-	void *pool = pkt_AddPool(allocator, pkt_GetPool(allocator), size - pkt_AllocatorSize());
-	pkt_header *first_block = pkt__first_block_in_pool(pool);
+	void *pool = tloc_AddPool(allocator, tloc_GetPool(allocator), size - tloc_AllocatorSize());
+	tloc_header *first_block = tloc__first_block_in_pool(pool);
 
 	return allocator;
 }
 
-void *pkt_AllocateRemote(pkt_allocator *allocator, pkt_size remote_size) {
+void *tloc_AllocateRemote(tloc_allocator *allocator, tloc_size remote_size) {
 	PKT_ASSERT(allocator->bytes_per_block > 0);
-	void* allocation = pkt__allocate(allocator, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + pkt__BLOCK_POINTER_OFFSET), remote_size);
-	return allocation ? (char*)allocation + pkt__MINIMUM_BLOCK_SIZE : 0;
+	void* allocation = tloc__allocate(allocator, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + tloc__BLOCK_POINTER_OFFSET), remote_size);
+	return allocation ? (char*)allocation + tloc__MINIMUM_BLOCK_SIZE : 0;
 }
 
-void *pkt__reallocate_remote(pkt_allocator *allocator, void *ptr, pkt_size size, pkt_size remote_size) {
-	pkt__lock_thread_access;
+void *tloc__reallocate_remote(tloc_allocator *allocator, void *ptr, tloc_size size, tloc_size remote_size) {
+	tloc__lock_thread_access;
 
 	if (ptr && remote_size == 0) {
-		pkt__unlock_thread_access;
-		pkt_FreeRemote(allocator, ptr);
+		tloc__unlock_thread_access;
+		tloc_FreeRemote(allocator, ptr);
 	}
 
 	if (!ptr) {
-		pkt__unlock_thread_access;
-		return pkt__allocate(allocator, size, remote_size);
+		tloc__unlock_thread_access;
+		return tloc__allocate(allocator, size, remote_size);
 	}
 
-	pkt_header *block = pkt__block_from_allocation(ptr);
-	pkt_header *next_block = pkt__next_physical_block(block);
+	tloc_header *block = tloc__block_from_allocation(ptr);
+	tloc_header *next_block = tloc__next_physical_block(block);
 	void *allocation = 0;
-	pkt_size current_size = pkt__block_size(block);
-	pkt_size current_remote_size = pkt__do_size_class_callback(block);
-	pkt_size adjusted_size = pkt__adjust_size(size, pkt__MEMORY_ALIGNMENT);
-	pkt_size combined_size = current_size + pkt__block_size(next_block);
-	pkt_size combined_remote_size = current_remote_size + pkt__do_size_class_callback(next_block);
-	if ((!pkt__next_block_is_free(block) || adjusted_size > combined_size || remote_size > combined_remote_size) && (remote_size > current_remote_size)) {
-		pkt__access_override;
-		allocation = pkt__allocate(allocator, size, remote_size);
+	tloc_size current_size = tloc__block_size(block);
+	tloc_size current_remote_size = tloc__do_size_class_callback(block);
+	tloc_size adjusted_size = tloc__adjust_size(size, tloc__MEMORY_ALIGNMENT);
+	tloc_size combined_size = current_size + tloc__block_size(next_block);
+	tloc_size combined_remote_size = current_remote_size + tloc__do_size_class_callback(next_block);
+	if ((!tloc__next_block_is_free(block) || adjusted_size > combined_size || remote_size > combined_remote_size) && (remote_size > current_remote_size)) {
+		tloc__access_override;
+		allocation = tloc__allocate(allocator, size, remote_size);
 		if (allocation) {
-			pkt__do_unable_to_reallocate_callback;
-			pkt_Free(allocator, ptr);
+			tloc__do_unable_to_reallocate_callback;
+			tloc_Free(allocator, ptr);
 		}
 	}
 	else {
 		//Reallocation is possible
 		if (remote_size > current_remote_size)
 		{
-			pkt__merge_with_next_block(allocator, block);
-			pkt__mark_block_as_used(block);
+			tloc__merge_with_next_block(allocator, block);
+			tloc__mark_block_as_used(block);
 		}
-		allocation = pkt__maybe_split_block(allocator, block, adjusted_size, remote_size);
+		allocation = tloc__maybe_split_block(allocator, block, adjusted_size, remote_size);
 	}
 
-	pkt__unlock_thread_access;
+	tloc__unlock_thread_access;
 	return allocation;
 }
 
-void *pkt_ReallocateRemote(pkt_allocator *allocator, void *block_extension, pkt_size remote_size) {
+void *tloc_ReallocateRemote(tloc_allocator *allocator, void *block_extension, tloc_size remote_size) {
 	PKT_ASSERT(allocator->bytes_per_block > 0);
-	void* allocation = pkt__reallocate_remote(allocator, block_extension ? pkt_AllocationFromExtensionPtr(block_extension) : block_extension, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + pkt__BLOCK_POINTER_OFFSET), remote_size);
-	return allocation ? (char*)allocation + pkt__MINIMUM_BLOCK_SIZE : 0;
+	void* allocation = tloc__reallocate_remote(allocator, block_extension ? tloc_AllocationFromExtensionPtr(block_extension) : block_extension, (remote_size / allocator->bytes_per_block) * (allocator->block_extension_size + tloc__BLOCK_POINTER_OFFSET), remote_size);
+	return allocation ? (char*)allocation + tloc__MINIMUM_BLOCK_SIZE : 0;
 }
 
-int pkt_FreeRemote(pkt_allocator *allocator, void* block_extension) {
-	void *allocation = (char*)block_extension - pkt__MINIMUM_BLOCK_SIZE;
-	return pkt_Free(allocator, allocation);
+int tloc_FreeRemote(tloc_allocator *allocator, void* block_extension) {
+	void *allocation = (char*)block_extension - tloc__MINIMUM_BLOCK_SIZE;
+	return tloc_Free(allocator, allocation);
 }
 #endif
 
