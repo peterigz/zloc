@@ -1061,7 +1061,6 @@ pkt_allocator *pkt_InitialiseAllocatorForRemote(void *memory, pkt_size size) {
 		return 0;
 	}
 	void *pool = pkt_AddPool(allocator, pkt_GetPool(allocator), size - pkt_AllocatorSize());
-	pkt_header *first_block = pkt__first_block_in_pool(pool);
 
 	return allocator;
 }
