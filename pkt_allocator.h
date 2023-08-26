@@ -876,7 +876,6 @@ pkt_bool pkt_RemovePool(pkt_allocator *allocator, pkt_pool *pool) {
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
 void *pkt__allocate(pkt_allocator *allocator, pkt_size size, pkt_size remote_size) {
-	remote_size = remote_size ? pkt__adjust_size(remote_size, allocator->minimum_allocation_size, pkt__MEMORY_ALIGNMENT) : 0;
 #else
 void *pkt_Allocate(pkt_allocator *allocator, pkt_size size) {
 #endif
@@ -1053,6 +1052,7 @@ pkt_allocator *pkt_InitialiseAllocatorForRemote(void *memory) {
 
 void *pkt_AllocateRemote(pkt_allocator *allocator, pkt_size remote_size) {
 	PKT_ASSERT(allocator->minimum_allocation_size > 0);
+	remote_size = pkt__adjust_size(remote_size, allocator->minimum_allocation_size, pkt__MEMORY_ALIGNMENT);
 	void* allocation = pkt__allocate(allocator, (remote_size / allocator->minimum_allocation_size) * (allocator->block_extension_size + pkt__BLOCK_POINTER_OFFSET), remote_size);
 	return allocation ? (char*)allocation + pkt__MINIMUM_BLOCK_SIZE : 0;
 }
