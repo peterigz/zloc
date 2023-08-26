@@ -896,37 +896,12 @@ typedef struct remote_buffer {
 	void *data;
 } remote_buffer;
 
-pkt_size get_remote_size(const pkt_header *block) {
-	remote_buffer *buffer = (remote_buffer*)pkt_BlockUserExtensionPtr(block);
-	return buffer->size;
-}
-
 void on_add_pool(void *user_data, void *block) {
 	remote_memory_pools *pools = (remote_memory_pools*)user_data;
 	remote_buffer *buffer = (remote_buffer*)block;
 	buffer->pool = pools->memory_pools[pools->pool_count];
 	buffer->size = pools->pool_sizes[pools->pool_count++];
 	buffer->offset_from_pool = 0;
-}
-
-void on_merge_next(void *user_data, pkt_header *block, pkt_header *next_block) {
-	remote_buffer *buffer = pkt_BlockUserExtensionPtr(block);
-	remote_buffer *next_buffer = pkt_BlockUserExtensionPtr(next_block);
-	buffer->size += next_buffer->size;
-	next_buffer->offset_from_pool = 0;
-	next_buffer->size = 0;
-}
-
-void on_merge_prev(void *user_data, pkt_header *prev_block, pkt_header *block) {
-	remote_buffer *buffer = pkt_BlockUserExtensionPtr(block);
-	if (buffer->offset_from_pool == 0) {
-		//Can't merge across pools
-		//return;
-	}
-	remote_buffer *prev_buffer = pkt_BlockUserExtensionPtr(prev_block);
-	prev_buffer->size += buffer->size;
-	buffer->offset_from_pool = 0;
-	buffer->size = 0;
 }
 
 void on_split_block(void *user_data, pkt_header* block, pkt_header *trimmed_block, pkt_size remote_size) {
@@ -978,7 +953,7 @@ int TestFreeAllRemoteBuffersAndPools(pkt_allocator *allocator, remote_memory_poo
 	return result;
 }
 
-int TestRemoteMemoryBlockManagement(pkt_uint iterations, pkt_size pool_size, pkt_size bytes_per_block, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
+int TestRemoteMemoryBlockManagement(pkt_uint iterations, pkt_size pool_size, pkt_size minimum_remote_allocation_size, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
 	int result = 1;
 	remote_memory_pools pools;
 	pools.pool_sizes[0] = pool_size;
@@ -987,13 +962,10 @@ int TestRemoteMemoryBlockManagement(pkt_uint iterations, pkt_size pool_size, pkt
 	void *allocator_memory = malloc(pkt_AllocatorSize());
 	allocator = pkt_InitialiseAllocator(allocator_memory);
 	pkt_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
-	pkt_SetBytesPerBlock(allocator, bytes_per_block);
+	pkt_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
-	allocator->get_block_size_callback = get_remote_size;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
-	allocator->merge_next_callback = on_merge_next;
-	allocator->merge_prev_callback = on_merge_prev;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
 	pkt_size memory_sizes[4] = { pkt__MEGABYTE(1), pkt__MEGABYTE(2), pkt__MEGABYTE(3), pkt__MEGABYTE(4) };
 	pkt_size range_pool_size = pkt_CalculateRemoteBlockPoolSize(allocator, pools.pool_sizes[pools.pool_count]);
@@ -1041,7 +1013,7 @@ int TestRemoteMemoryBlockManagement(pkt_uint iterations, pkt_size pool_size, pkt
 	return result;
 }
 
-int TestRemoteMemoryReallocation(pkt_uint iterations, pkt_size pool_size, pkt_size bytes_per_block, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
+int TestRemoteMemoryReallocation(pkt_uint iterations, pkt_size pool_size, pkt_size minimum_remote_allocation_size, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
 	int result = 1;
 	remote_memory_pools pools;
 	pools.pool_sizes[0] = pool_size;
@@ -1050,13 +1022,10 @@ int TestRemoteMemoryReallocation(pkt_uint iterations, pkt_size pool_size, pkt_si
 	void *allocator_memory = malloc(pkt_AllocatorSize());
 	allocator = pkt_InitialiseAllocator(allocator_memory);
 	pkt_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
-	pkt_SetBytesPerBlock(allocator, bytes_per_block);
+	pkt_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
-	allocator->get_block_size_callback = get_remote_size;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
-	allocator->merge_next_callback = on_merge_next;
-	allocator->merge_prev_callback = on_merge_prev;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
 	pkt_size memory_sizes[4] = { pkt__MEGABYTE(1), pkt__MEGABYTE(2), pkt__MEGABYTE(3), pkt__MEGABYTE(4) };
 	pkt_size range_pool_size = pkt_CalculateRemoteBlockPoolSize(allocator, pools.pool_sizes[pools.pool_count]);
@@ -1083,22 +1052,19 @@ int TestRemoteMemoryReallocation(pkt_uint iterations, pkt_size pool_size, pkt_si
 	return result;
 }
 
-int TestRemoteMemoryReallocationIterations(pkt_uint iterations, pkt_size pool_size, pkt_size bytes_per_block, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
+int TestRemoteMemoryReallocationIterations(pkt_uint iterations, pkt_size pool_size, pkt_size minimum_remote_allocation_size, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
 	int result = 1;
 	remote_memory_pools pools;
 	pools.pool_sizes[0] = pool_size;
 	pools.pool_count = 0;
 	pkt_allocator *allocator;
 	void *allocator_memory = malloc(pkt_AllocatorSize());
-	allocator = pkt_InitialiseAllocator(allocator_memory);
+	allocator = pkt_InitialiseAllocatorForRemote(allocator_memory);
 	pkt_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
-	pkt_SetBytesPerBlock(allocator, bytes_per_block);
+	pkt_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
-	allocator->get_block_size_callback = get_remote_size;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
-	allocator->merge_next_callback = on_merge_next;
-	allocator->merge_prev_callback = on_merge_prev;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
 	pkt_size range_pool_size = pkt_CalculateRemoteBlockPoolSize(allocator, pools.pool_sizes[pools.pool_count]);
 	pools.range_pools[pools.pool_count] = malloc(range_pool_size);
@@ -1142,7 +1108,7 @@ int TestRemoteMemoryReallocationIterations(pkt_uint iterations, pkt_size pool_si
 	return result;
 }
 
-int TestRemoteMemoryReallocationIterationsFreeing(pkt_uint iterations, pkt_size pool_size, pkt_size bytes_per_block, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
+int TestRemoteMemoryReallocationIterationsFreeing(pkt_uint iterations, pkt_size pool_size, pkt_size minimum_remote_allocation_size, pkt_size min_allocation_size, pkt_size max_allocation_size, pkt_random *random) {
 	int result = 1;
 	remote_memory_pools pools;
 	pools.pool_sizes[0] = pool_size;
@@ -1151,13 +1117,10 @@ int TestRemoteMemoryReallocationIterationsFreeing(pkt_uint iterations, pkt_size 
 	void *allocator_memory = malloc(pkt_AllocatorSize());
 	allocator = pkt_InitialiseAllocator(allocator_memory);
 	pkt_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
-	pkt_SetBytesPerBlock(allocator, bytes_per_block);
+	pkt_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
-	allocator->get_block_size_callback = get_remote_size;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
-	allocator->merge_next_callback = on_merge_next;
-	allocator->merge_prev_callback = on_merge_prev;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
 	pkt_size range_pool_size = pkt_CalculateRemoteBlockPoolSize(allocator, pools.pool_sizes[pools.pool_count]);
 	pools.range_pools[pools.pool_count] = malloc(range_pool_size);
@@ -1214,7 +1177,7 @@ int main() {
 	pkt_random random;
 	pkt_size time = (pkt_size)clock() * 1000;
 	_ReSeed(&random, time);
-	//_ReSeed(&random, 245000);
+	//_ReSeed(&random, 178000);
 	//_ReSeed(&random, 123456);
 
 #if defined(PKT_THREAD_SAFE)
