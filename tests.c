@@ -960,7 +960,7 @@ int TestRemoteMemoryBlockManagement(pkt_uint iterations, pkt_size pool_size, pkt
 	pools.pool_count = 0;
 	pkt_allocator *allocator;
 	void *allocator_memory = malloc(pkt_AllocatorSize());
-	allocator = pkt_InitialiseAllocator(allocator_memory);
+	allocator = pkt_InitialiseAllocatorForRemote(allocator_memory);
 	pkt_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	pkt_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
@@ -1020,7 +1020,7 @@ int TestRemoteMemoryReallocation(pkt_uint iterations, pkt_size pool_size, pkt_si
 	pools.pool_count = 0;
 	pkt_allocator *allocator;
 	void *allocator_memory = malloc(pkt_AllocatorSize());
-	allocator = pkt_InitialiseAllocator(allocator_memory);
+	allocator = pkt_InitialiseAllocatorForRemote(allocator_memory);
 	pkt_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	pkt_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
@@ -1115,7 +1115,7 @@ int TestRemoteMemoryReallocationIterationsFreeing(pkt_uint iterations, pkt_size 
 	pools.pool_count = 0;
 	pkt_allocator *allocator;
 	void *allocator_memory = malloc(pkt_AllocatorSize());
-	allocator = pkt_InitialiseAllocator(allocator_memory);
+	allocator = pkt_InitialiseAllocatorForRemote(allocator_memory);
 	pkt_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	pkt_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;

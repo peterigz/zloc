@@ -1026,6 +1026,7 @@ void pkt_AddRemotePool(pkt_allocator *allocator, void *block_memory, pkt_size bl
 	PKT_ASSERT(allocator->merge_next_callback);
 	PKT_ASSERT(allocator->merge_prev_callback);
 	PKT_ASSERT(allocator->split_block_callback);
+	PKT_ASSERT(allocator->get_block_size_callback != pkt__block_size);	//Make sure you initialise the remote allocator with pkt_InitialiseAllocatorForRemote
 
 	void *block = pkt_BlockUserExtensionPtr(pkt__first_block_in_pool(block_memory));
 	pkt__do_add_pool_callback;
