@@ -7,7 +7,7 @@
 #define PKT_ERROR_COLOR "\033[90m"
 #define PKT_IMPLEMENTATION
 //#define PKT_OUTPUT_ERROR_MESSAGES
-//#define PKT_THREAD_SAFE
+#define PKT_THREAD_SAFE
 #define PKT_ENABLE_REMOTE_MEMORY
 #define PKT_MAX_SIZE_INDEX 35		//max block size 34GB
 #include "pkt_allocator.h"

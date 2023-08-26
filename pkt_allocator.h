@@ -876,13 +876,14 @@ pkt_bool pkt_RemovePool(pkt_allocator *allocator, pkt_pool *pool) {
 
 #if defined(PKT_ENABLE_REMOTE_MEMORY)
 void *pkt__allocate(pkt_allocator *allocator, pkt_size size, pkt_size remote_size) {
+	remote_size = remote_size ? pkt__adjust_size(remote_size, allocator->minimum_allocation_size, pkt__MEMORY_ALIGNMENT) : 0;
 #else
 void *pkt_Allocate(pkt_allocator *allocator, pkt_size size) {
 #endif
 	pkt__lock_thread_access;
 	pkt_index fli;
 	pkt_index sli;
-	size = pkt__adjust_size(size, allocator->minimum_allocation_size, pkt__MEMORY_ALIGNMENT);
+	size = pkt__adjust_size(size, pkt__MINIMUM_BLOCK_SIZE, pkt__MEMORY_ALIGNMENT);
 	pkt__map(pkt__map_size, &fli, &sli);
 	//Note that there may well be an appropriate size block in the class but that block may not be at the head of the list
 	//In this situation we could opt to loop through the list of the size class to see if there is an appropriate size but instead
