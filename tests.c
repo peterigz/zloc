@@ -10,7 +10,7 @@
 #define ZLOC_THREAD_SAFE
 #define ZLOC_ENABLE_REMOTE_MEMORY
 #define ZLOC_MAX_SIZE_INDEX 35		//max block size 34GB
-#include "pkt_allocator.h"
+#include "zloc.h"
 #define _TIMESPEC_DEFINED
 #ifdef _WIN32
 #ifdef ZLOC_THREAD_SAFE	
