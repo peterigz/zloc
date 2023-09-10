@@ -437,13 +437,9 @@ extern "C" {
 
 	ZLOC_API void zloc_AddRemotePool(zloc_allocator *allocator, void *block_memory, zloc_size block_memory_size, zloc_size remote_pool_size);
 
-	ZLOC_API inline void* zloc_BlockUserExtensionPtr(const zloc_header *block) {
-		return (char*)block + sizeof(zloc_header);
-	}
+    ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block);
 
-	ZLOC_API inline void* zloc_AllocationFromExtensionPtr(const void *block) {
-		return (void*)((char*)block - zloc__MINIMUM_BLOCK_SIZE);
-	}
+    ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block);
 
 #endif
 
@@ -980,6 +976,15 @@ int zloc_Free(zloc_allocator *allocator, void* allocation) {
 }
 
 #if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+    
+void* zloc_BlockUserExtensionPtr(const zloc_header *block) {
+    return (char*)block + sizeof(zloc_header);
+}
+
+void* zloc_AllocationFromExtensionPtr(const void *block) {
+    return (void*)((char*)block - zloc__MINIMUM_BLOCK_SIZE);
+}
+    
 /*
 	Standard callbacks, you can copy paste these to replace with your own as needed to add any extra functionality
 	that you might need
@@ -1083,8 +1088,6 @@ void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size si
 		zloc__access_override;
 		allocation = zloc__allocate(allocator, size, remote_size);
 		if (allocation) {
-			zloc_remote_header *remote_block = (zloc_remote_header*)zloc_BlockUserExtensionPtr(block);
-			zloc_size test_remote_size = zloc__do_size_class_callback(block);
 			zloc__do_unable_to_reallocate_callback;
 			zloc_Free(allocator, ptr);
 		}

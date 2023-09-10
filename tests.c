@@ -398,7 +398,6 @@ int TestReAllocationFallbackToAllocateAndCopy(void) {
 	}
 	else {
 		void *allocation1 = zloc_Allocate(allocator, 1024);
-		void *allocation2 = zloc_Allocate(allocator, 1024);
 		allocation1 = zloc_Reallocate(allocator, allocation1, 2048);
 		if (!allocation1) {
 			result = 0;
@@ -905,7 +904,6 @@ void on_add_pool(void *user_data, void *block) {
 }
 
 void on_split_block(void *user_data, zloc_header* block, zloc_header *trimmed_block, zloc_size remote_size) {
-	remote_memory_pools *pools = (remote_memory_pools*)user_data;
 	remote_buffer *buffer = zloc_BlockUserExtensionPtr(block);
 	remote_buffer *trimmed_buffer = zloc_BlockUserExtensionPtr(trimmed_block);
 	trimmed_buffer->size = buffer->size - remote_size;
@@ -916,7 +914,6 @@ void on_split_block(void *user_data, zloc_header* block, zloc_header *trimmed_bl
 }
 
 void on_reallocation_copy(void *user_data, zloc_header* block, zloc_header *new_block) {
-	remote_memory_pools *pools = (remote_memory_pools*)user_data;
 	remote_buffer *buffer = zloc_BlockUserExtensionPtr(block);
 	remote_buffer *new_buffer = zloc_BlockUserExtensionPtr(new_block);
 	new_buffer->data = (void*)((char*)new_buffer->pool + new_buffer->offset_from_pool);
@@ -926,7 +923,6 @@ void on_reallocation_copy(void *user_data, zloc_header* block, zloc_header *new_
 static void zloc__output_buffer_info(void* ptr, size_t size, int free, void* user, int count)
 {
 	remote_buffer *buffer = (remote_buffer*)user;
-	zloc_header *block = (zloc_header*)ptr;
 	printf("%i) \t%s size: \t%zi \tbuffer size: %zu \toffset: %zu \n", count, free ? "free" : "used", size, buffer->size, buffer->offset_from_pool);
 }
 
@@ -967,7 +963,7 @@ int TestRemoteMemoryBlockManagement(zloc_uint iterations, zloc_size pool_size, z
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
-	zloc_size memory_sizes[4] = { zloc__MEGABYTE(1), zloc__MEGABYTE(2), zloc__MEGABYTE(3), zloc__MEGABYTE(4) };
+	//zloc_size memory_sizes[4] = { zloc__MEGABYTE(1), zloc__MEGABYTE(2), zloc__MEGABYTE(3), zloc__MEGABYTE(4) };
 	zloc_size range_pool_size = zloc_CalculateRemoteBlockPoolSize(allocator, pools.pool_sizes[pools.pool_count]);
 	pools.range_pools[pools.pool_count] = malloc(range_pool_size);
 	pools.memory_pools[pools.pool_count] = malloc(pool_size);
@@ -1027,7 +1023,7 @@ int TestRemoteMemoryReallocation(zloc_uint iterations, zloc_size pool_size, zloc
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
-	zloc_size memory_sizes[4] = { zloc__MEGABYTE(1), zloc__MEGABYTE(2), zloc__MEGABYTE(3), zloc__MEGABYTE(4) };
+	//zloc_size memory_sizes[4] = { zloc__MEGABYTE(1), zloc__MEGABYTE(2), zloc__MEGABYTE(3), zloc__MEGABYTE(4) };
 	zloc_size range_pool_size = zloc_CalculateRemoteBlockPoolSize(allocator, pools.pool_sizes[pools.pool_count]);
 	pools.range_pools[pools.pool_count] = malloc(range_pool_size);
 	pools.memory_pools[pools.pool_count] = malloc(pool_size);
