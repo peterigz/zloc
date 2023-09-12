@@ -430,20 +430,25 @@ int TestReAllocationOfNullPtr(void) {
 	return result;
 }
 
-int TestManyAllocationsAndFreesDummy(zloc_uint iterations, zloc_size pool_size, zloc_size min_allocation_size, zloc_size max_allocation_size) {
+int TestAlignedAllocation(void) {
+	zloc_size size = zloc__MEGABYTE(1);
 	int result = 1;
-	zloc_size allocations[100];
-	memset(allocations, 0, sizeof(zloc_size) * 100);
-	for (int i = 0; i != iterations; ++i) {
-		int index = rand() % 100;
-		if (allocations[index]) {
-			allocations[index] = 0;
+	void *memory = malloc(size);
+	zloc_allocator *allocator = zloc_InitialiseAllocatorWithPool(memory, size);
+	if (!allocator) {
+		result = 0;
+	}
+	else {
+		void *allocation = 0;
+		allocation = zloc_AllocateAligned(allocator, 1024, 64);
+		if (!allocation) {
+			result = 0;
 		}
 		else {
-			zloc_size allocation_size = (rand() % max_allocation_size) + zloc__MINIMUM_BLOCK_SIZE;
-			allocations[index] = allocation_size;
+			result = 1;
 		}
 	}
+	zloc_free_memory(memory);
 	return result;
 }
 
@@ -481,6 +486,132 @@ int TestFreeAllBuffersAndPools(zloc_allocator *allocator, void *memory[8], void 
 		}
 	}
 
+	return result;
+}
+
+int TestManyRandomAlignedAllocations(zloc_uint iterations, zloc_size pool_size, zloc_size min_allocation_size, zloc_size max_allocation_size, zloc_random *random) {
+	int result = 1;
+	void *memory = malloc(pool_size);
+	memset(memory, 0, pool_size);
+	zloc_allocator *allocator = zloc_InitialiseAllocatorWithPool(memory, pool_size);
+	assert(zloc_VerifySegregatedLists(allocator) == zloc__OK);
+	zloc_size alignments[7] = { 16, 32, 64, 128, 256, 512, 1024 };
+	if (!allocator) {
+		result = 0;
+		zloc_free_memory(memory);
+	}
+	else {
+		void *allocations[100];
+		memset(allocations, 0, sizeof(void*) * 100);
+		//Do a bunch of normal allocations first
+		for (int i = 0; i != iterations; ++i) {
+			int index = rand() % 100;
+			if (allocations[index]) {
+				zloc_Free(allocator, allocations[index]);
+				allocations[index] = 0;
+			}
+			else {
+				zloc_size allocation_size = (zloc_size)_zloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				//zloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
+				allocations[index] = zloc_Allocate(allocator, allocation_size);
+				if (allocations[index]) {
+					//Do a memset set to test if we're overwriting block headers
+					memset(allocations[index], 7, allocation_size);
+				}
+			}
+			assert(zloc_VerifyBlocks(zloc__allocator_first_block(allocator), 0, 0) == zloc__OK);
+		}
+		for (int i = 0; i != iterations; ++i) {
+			if (i == 73) {
+				int d = 0;
+			}
+			int index = rand() % 100;
+			if (allocations[index]) {
+				zloc_Free(allocator, allocations[index]);
+				allocations[index] = 0;
+			}
+			else {
+				zloc_size allocation_size = (zloc_size)_zloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				int alignment = rand() % 7;
+				allocations[index] = zloc_AllocateAligned(allocator, allocation_size, alignments[alignment]);
+				if (allocations[index]) {
+					//Do a memset set to test if we're overwriting block headers
+					memset(allocations[index], 7, allocation_size);
+				}
+			}
+			assert(zloc_VerifyBlocks(zloc__allocator_first_block(allocator), 0, 0) == zloc__OK);
+		}
+		zloc_free_memory(memory);
+	}
+	return result;
+}
+
+int TestManyAlignedAllocationsAndFreesAddPools(zloc_uint iterations, zloc_size pool_size, zloc_size min_allocation_size, zloc_size max_allocation_size, zloc_random *random) {
+	int result = 1;
+	void *memory[8];
+	memset(memory, 0, sizeof(void*) * 8);
+	int memory_index = 0;
+	memory[memory_index] = malloc(pool_size);
+	memset(memory[memory_index], 0, pool_size);
+	zloc_allocator *allocator = zloc_InitialiseAllocatorWithPool(memory[memory_index++], pool_size);
+	assert(zloc_VerifySegregatedLists(allocator) == zloc__OK);
+	if (!allocator) {
+		result = 0;
+		zloc_free_memory(memory[0]);
+	}
+	else {
+		void *allocations[100];
+		memset(allocations, 0, sizeof(void*) * 100);
+		zloc_size alignments[7] = { 16, 32, 64, 128, 256, 512, 1024 };
+		for (int i = 0; i != iterations; ++i) {
+			int index = rand() % 100;
+			if (allocations[index]) {
+				zloc_Free(allocator, allocations[index]);
+				allocations[index] = 0;
+			}
+			else {
+				zloc_size allocation_size = (zloc_size)_zloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				//zloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
+				int alignment = rand() % 7;
+				allocations[index] = zloc_AllocateAligned(allocator, allocation_size, alignments[alignment]);
+				if (allocations[index]) {
+					//Do a memset set to test if we're overwriting block headers
+					memset(allocations[index], 7, allocation_size);
+				}
+				else if (memory_index < 8) {
+					//We ran out of memory, add a new pool
+					memory[memory_index] = malloc(pool_size);
+					if (memory[memory_index]) {
+						zloc_AddPool(allocator, memory[memory_index++], pool_size);
+						allocations[index] = zloc_AllocateAligned(allocator, allocation_size, alignments[alignment]);
+						if (!allocations[index]) {
+							result = 0;
+							break;
+						}
+					}
+				}
+			}
+			assert(zloc_VerifyBlocks(zloc__allocator_first_block(allocator), 0, 0) == zloc__OK);
+		}
+		result = TestFreeAllBuffersAndPools(allocator, memory, allocations);
+	}
+	return result;
+}
+
+int TestManyAllocationsAndFreesDummy(zloc_uint iterations, zloc_size pool_size, zloc_size min_allocation_size, zloc_size max_allocation_size) {
+	int result = 1;
+	zloc_size allocations[100];
+	memset(allocations, 0, sizeof(zloc_size) * 100);
+	for (int i = 0; i != iterations; ++i) {
+		int index = rand() % 100;
+		if (allocations[index]) {
+			allocations[index] = 0;
+		}
+		else {
+			zloc_size allocation_size = (rand() % max_allocation_size) + zloc__MINIMUM_BLOCK_SIZE;
+			allocations[index] = allocation_size;
+		}
+	}
 	return result;
 }
 
@@ -1173,7 +1304,7 @@ int main() {
 	zloc_random random;
 	zloc_size time = (zloc_size)clock() * 1000;
 	_ReSeed(&random, time);
-	//_ReSeed(&random, 178000);
+	_ReSeed(&random, 180000);
 	//_ReSeed(&random, 123456);
 
 #if defined(ZLOC_THREAD_SAFE)
@@ -1214,7 +1345,12 @@ int main() {
 	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 2MB - 10MB", TestManyAllocationsAndFreesAddPools(1000, zloc__MEGABYTE(128), zloc__MEGABYTE(2), zloc__MEGABYTE(10), &random));
 	PrintTestResult("Test: Many random allocations and frees, go oom: 1000 iterations, 1GB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, zloc__GIGABYTE(1), zloc__KILOBYTE(256), zloc__MEGABYTE(50), &random));
 	PrintTestResult("Test: Many random allocations and frees, go oom: 1000 iterations, 512MB pool size, max allocation: 2MB - 100MB", TestManyAllocationsAndFrees(1000, zloc__MEGABYTE(512), zloc__KILOBYTE(256), zloc__MEGABYTE(25), &random));
-	//PrintTestResult("Test: Allocations until full, then free and allocate randomly for 10000 iterations, 128MB pool size, max allocation: 128kb - 10MB", TestAllocatingUntilOutOfSpaceThenRandomFreesAndAllocations(1000, zloc__MEGABYTE(128), zloc__KILOBYTE(128), zloc__MEGABYTE(10), &random));
+	PrintTestResult("Test: Single aligned allocation", TestAlignedAllocation());
+	PrintTestResult("Test: Many random aligned allocations and frees 1000 iterations, 128MB pool size, max allocation: 256b - 2mb", TestManyRandomAlignedAllocations(1000, zloc__MEGABYTE(128), 256, zloc__MEGABYTE(2), &random));
+	PrintTestResult("Test: Many random aligned allocations and frees 1000 iterations, 128MB pool size, max allocation: 2kb - 4mb", TestManyRandomAlignedAllocations(1000, zloc__MEGABYTE(128), zloc__KILOBYTE(2), zloc__MEGABYTE(4), &random));
+	PrintTestResult("Test: Many random aligned allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 64kb - 1MB", TestManyAlignedAllocationsAndFreesAddPools(1000, zloc__MEGABYTE(128), 64 * 1024, zloc__MEGABYTE(1), &random));
+	PrintTestResult("Test: Many random aligned allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 1MB - 2MB", TestManyAlignedAllocationsAndFreesAddPools(1000, zloc__MEGABYTE(128), zloc__MEGABYTE(1), zloc__MEGABYTE(2), &random));
+	PrintTestResult("Test: Many random aligned allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 2MB - 10MB", TestManyAlignedAllocationsAndFreesAddPools(1000, zloc__MEGABYTE(128), zloc__MEGABYTE(2), zloc__MEGABYTE(10), &random));
 #if defined(zloc__64BIT)
 	PrintTestResult("Test: Create a large (>4gb) memory pool, and allocate half of it", TestAllocation64bit());
 #endif
