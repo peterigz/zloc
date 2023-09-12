@@ -445,13 +445,9 @@ extern "C" {
 
 	ZLOC_API void zloc_AddRemotePool(zloc_allocator *allocator, void *block_memory, zloc_size block_memory_size, zloc_size remote_pool_size);
 
-	ZLOC_API inline void* zloc_BlockUserExtensionPtr(const zloc_header *block) {
-		return (char*)block + sizeof(zloc_header);
-	}
+    ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block);
 
-	ZLOC_API inline void* zloc_AllocationFromExtensionPtr(const void *block) {
-		return (void*)((char*)block - zloc__MINIMUM_BLOCK_SIZE);
-	}
+    ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block);
 
 #endif
 
@@ -840,6 +836,14 @@ extern "C" {
 #include <string.h>
 
 //Definitions
+ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block) {
+    return (char*)block + sizeof(zloc_header);
+}
+
+ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block) {
+    return (void*)((char*)block - zloc__MINIMUM_BLOCK_SIZE);
+}
+
 zloc_allocator *zloc_InitialiseAllocator(void *memory) {
 	if (!memory) {
 		ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", ZLOC_ERROR_NAME);
@@ -1169,8 +1173,6 @@ void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size si
 		zloc__access_override;
 		allocation = zloc__allocate(allocator, size, remote_size);
 		if (allocation) {
-			zloc_remote_header *remote_block = (zloc_remote_header*)zloc_BlockUserExtensionPtr(block);
-			zloc_size test_remote_size = zloc__do_size_class_callback(block);
 			zloc__do_unable_to_reallocate_callback;
 			zloc_Free(allocator, ptr);
 		}

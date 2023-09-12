@@ -522,9 +522,6 @@ int TestManyRandomAlignedAllocations(zloc_uint iterations, zloc_size pool_size, 
 			assert(zloc_VerifyBlocks(zloc__allocator_first_block(allocator), 0, 0) == zloc__OK);
 		}
 		for (int i = 0; i != iterations; ++i) {
-			if (i == 73) {
-				int d = 0;
-			}
 			int index = rand() % 100;
 			if (allocations[index]) {
 				zloc_Free(allocator, allocations[index]);
