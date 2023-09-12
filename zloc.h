@@ -100,7 +100,8 @@ extern "C" {
 		zloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(zloc_size),
 		zloc__MINIMUM_BLOCK_SIZE = 16,
 		zloc__BLOCK_SIZE_OVERHEAD = sizeof(zloc_size),
-		zloc__POINTER_SIZE = sizeof(void*)
+		zloc__POINTER_SIZE = sizeof(void*),
+        zloc__SMALLEST_CATEGORY = (1 << (zloc__SECOND_LEVEL_INDEX_LOG2 + MEMORY_ALIGNMENT_LOG2))
 	};
 
 	typedef enum zloc__boundary_tag_flags {
@@ -457,6 +458,11 @@ extern "C" {
 
 	static inline void zloc__map(zloc_size size, zloc_index *fli, zloc_index *sli) {
 		*fli = zloc__scan_reverse(size);
+        if(*fli <= zloc__SECOND_LEVEL_INDEX_LOG2) {
+            *fli = 0;
+            *sli = (int)size / (zloc__SMALLEST_CATEGORY / zloc__SECOND_LEVEL_INDEX_COUNT);
+            return;
+        }
 		size = size & ~(1 << *fli);
 		*sli = (zloc_index)(size >> (*fli - zloc__SECOND_LEVEL_INDEX_LOG2)) % zloc__SECOND_LEVEL_INDEX_COUNT;
 	}
@@ -647,7 +653,7 @@ extern "C" {
 		allocator->segregated_lists[fli][sli] = block;
 		//Flag the bitmaps to mark that this size class now contains a free block
 		allocator->first_level_bitmap |= ZLOC_ONE << fli;
-		allocator->second_level_bitmaps[fli] |= 1 << sli;
+		allocator->second_level_bitmaps[fli] |= 1U << sli;
 		zloc__mark_block_as_free(block);
 	}
 
@@ -671,7 +677,7 @@ extern "C" {
 		else {
 			//There's no more free blocks in this size class so flag the second level bitmap for this class to 0.
 			allocator->segregated_lists[fli][sli] = zloc__null_block(allocator);
-			allocator->second_level_bitmaps[fli] &= ~(1 << sli);
+			allocator->second_level_bitmaps[fli] &= ~(1U << sli);
 			if (allocator->second_level_bitmaps[fli] == 0) {
 				//And if the second level bitmap is 0 then the corresponding bit in the first lebel can be zero'd too.
 				allocator->first_level_bitmap &= ~(ZLOC_ONE << fli);
