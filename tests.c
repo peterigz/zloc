@@ -1137,7 +1137,50 @@ int TestRemoteMemoryBlockManagement(zloc_uint iterations, zloc_size pool_size, z
 	return result;
 }
 
-int TestRemoteMemoryReallocation(zloc_uint iterations, zloc_size pool_size, zloc_size minimum_remote_allocation_size, zloc_size min_allocation_size, zloc_size max_allocation_size, zloc_random *random) {
+int TestRemoteMemoryAllocation(zloc_size pool_size, zloc_size minimum_remote_allocation_size) {
+	int result = 1;
+	remote_memory_pools pools;
+	pools.pool_sizes[0] = pool_size;
+	pools.pool_count = 0;
+	zloc_allocator *allocator;
+	void *allocator_memory = malloc(zloc_AllocatorSize());
+	allocator = zloc_InitialiseAllocatorForRemote(allocator_memory);
+	zloc_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
+	zloc_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
+	allocator->user_data = &pools;
+	allocator->add_pool_callback = on_add_pool;
+	allocator->split_block_callback = on_split_block;
+	allocator->unable_to_reallocate_callback = on_reallocation_copy;
+	//zloc_size memory_sizes[4] = { zloc__MEGABYTE(1), zloc__MEGABYTE(2), zloc__MEGABYTE(3), zloc__MEGABYTE(4) };
+	zloc_size range_pool_size = zloc_CalculateRemoteBlockPoolSize(allocator, pools.pool_sizes[pools.pool_count]);
+	pools.range_pools[pools.pool_count] = malloc(range_pool_size);
+	pools.memory_pools[pools.pool_count] = malloc(pool_size);
+	zloc_AddRemotePool(allocator, pools.range_pools[pools.pool_count], range_pool_size, pools.pool_sizes[pools.pool_count]);
+	remote_buffer *buffers[100];
+	memset(buffers, 0, sizeof(void*) * 100);
+	buffers[0] = zloc_AllocateRemote(allocator, zloc__KILOBYTE(1));
+	buffers[0]->data = (void*)((char*)pools.memory_pools[0] + buffers[0]->offset_from_pool);
+	buffers[1] = zloc_AllocateRemote(allocator, zloc__KILOBYTE(1));
+	buffers[1]->data = (void*)((char*)pools.memory_pools[0] + buffers[1]->offset_from_pool);
+	buffers[0] = zloc_AllocateRemote(allocator, zloc__KILOBYTE(2));
+	buffers[0]->data = (void*)((char*)pools.memory_pools[0] + buffers[0]->offset_from_pool);
+	buffers[1] = zloc_AllocateRemote(allocator, zloc__KILOBYTE(2));
+	buffers[1]->data = (void*)((char*)pools.memory_pools[0] + buffers[1]->offset_from_pool);
+	remote_buffer *buffer = zloc_AllocateRemote(allocator, zloc__KILOBYTE(4));
+	zloc_FreeRemote(allocator, buffers[0]);
+	buffers[0] = buffer;
+
+	//remote_buffer *test = zloc_AllocateRemote(allocator, zloc__MEGABYTE(32));
+	for (int c = 0; c != pools.pool_count; ++c) {
+		zloc_VerifyRemoteBlocks(zloc__first_block_in_pool(pools.range_pools[c]), zloc__output_buffer_info, 0);
+		zloc_free_memory(pools.range_pools[c]);
+		zloc_free_memory(pools.memory_pools[c]);
+	}
+	zloc_free_memory(allocator_memory);
+	return result;
+}
+
+int TestRemoteMemoryReallocation(zloc_size pool_size, zloc_size minimum_remote_allocation_size) {
 	int result = 1;
 	remote_memory_pools pools;
 	pools.pool_sizes[0] = pool_size;
@@ -1301,8 +1344,16 @@ int main() {
 	zloc_random random;
 	zloc_size time = (zloc_size)clock() * 1000;
 	_ReSeed(&random, time);
-	_ReSeed(&random, 180000);
+	//_ReSeed(&random, 180000);
 	//_ReSeed(&random, 123456);
+
+	PrintTestResult("Test: Remote memory management, Reallocation", TestRemoteMemoryReallocation(zloc__MEGABYTE(16), zloc__KILOBYTE(1)));
+	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 512b - 4kb", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(16), 512, 512, zloc__KILOBYTE(4), &random));
+	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 2MB", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(16), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(2), &random));
+	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 4MB", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(64), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(4), &random));
+	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 4MB with Freeing", TestRemoteMemoryReallocationIterationsFreeing(10000, zloc__MEGABYTE(64), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(4), &random));
+	PrintTestResult("Test: Remote memory management, 10000 iterations, allocate 1MB - 64mb, add 128mb pools as needed.", TestRemoteMemoryReallocationIterationsFreeing(10000, zloc__MEGABYTE(128), zloc__MEGABYTE(1), zloc__MEGABYTE(1), zloc__MEGABYTE(16), &random));
+	return;
 
 #if defined(ZLOC_THREAD_SAFE)
 	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(AllocationWorker, 1000, zloc__MEGABYTE(128), zloc__MINIMUM_BLOCK_SIZE, zloc__KILOBYTE(256), 2, &random));
@@ -1357,7 +1408,7 @@ int main() {
 	PrintTestResult("Test: Remote memory management, 10000 iterations, allocate 8kb - 64kb, add 16mb pools as needed.", TestRemoteMemoryBlockManagement(10000, zloc__MEGABYTE(64), zloc__KILOBYTE(8), zloc__KILOBYTE(8), zloc__KILOBYTE(64), &random));
 	PrintTestResult("Test: Remote memory management, 10000 iterations, allocate 256kb - 2mb, add 64mb pools as needed.", TestRemoteMemoryBlockManagement(10000, zloc__MEGABYTE(64), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(2), &random));
 	PrintTestResult("Test: Remote memory management, 10000 iterations, allocate 1MB - 64mb, add 128mb pools as needed.", TestRemoteMemoryBlockManagement(10000, zloc__MEGABYTE(128), zloc__MEGABYTE(1), zloc__MEGABYTE(1), zloc__MEGABYTE(64), &random));
-	PrintTestResult("Test: Remote memory management, Reallocation", TestRemoteMemoryReallocation(10000, zloc__MEGABYTE(16), 512, 16, zloc__KILOBYTE(1), &random));
+	PrintTestResult("Test: Remote memory management, Reallocation", TestRemoteMemoryReallocation(zloc__MEGABYTE(16), zloc__KILOBYTE(1)));
 	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 512b - 4kb", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(16), 512, 512, zloc__KILOBYTE(4), &random));
 	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 2MB", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(16), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(2), &random));
 	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 4MB", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(64), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(4), &random));
