@@ -478,6 +478,17 @@ extern "C" {
 	static inline void zloc__unset_remote_block_limit_reached(zloc_allocator *allocator) { allocator->block_extension_size &= ~1; };
 #endif
 
+	//Debug tool to make sure that if a first level bitmap has a bit set, then the corresponding second level index should contain a value
+	static inline void zloc__verify_lists(zloc_allocator *allocator) {
+		for (int fli = 0; fli != zloc__FIRST_LEVEL_INDEX_COUNT; ++fli) {
+			if (allocator->first_level_bitmap & (1ULL << fli)) {
+				//bit in first level is set but according to the second level bitmap array there are no blocks so the first level
+				//bitmap bit should have been 0
+				ZLOC_ASSERT(allocator->second_level_bitmaps[fli] > 0);
+			}
+		}
+	}
+
 	//Read only functions
 	static inline zloc_bool zloc__has_free_block(const zloc_allocator *allocator, zloc_index fli, zloc_index sli) {
 		return allocator->first_level_bitmap & (ZLOC_ONE << fli) && allocator->second_level_bitmaps[fli] & (1U << sli);
@@ -655,6 +666,9 @@ extern "C" {
 		allocator->first_level_bitmap |= ZLOC_ONE << fli;
 		allocator->second_level_bitmaps[fli] |= 1U << sli;
 		zloc__mark_block_as_free(block);
+#ifdef ZLOC_EXTRA_DEBUGGING
+		zloc__verify_lists(allocator);
+#endif
 	}
 
 	/*
@@ -684,6 +698,9 @@ extern "C" {
 			}
 		}
 		zloc__mark_block_as_used(block);
+#ifdef ZLOC_EXTRA_DEBUGGING
+		zloc__verify_lists(allocator);
+#endif
 		return block;
 	}
 
@@ -711,6 +728,9 @@ extern "C" {
 			}
 		}
 		zloc__mark_block_as_used(block);
+#ifdef ZLOC_EXTRA_DEBUGGING
+		zloc__verify_lists(allocator);
+#endif
 	}
 
 	/*

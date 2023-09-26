@@ -10,6 +10,7 @@
 #define ZLOC_THREAD_SAFE
 #define ZLOC_ENABLE_REMOTE_MEMORY
 #define ZLOC_MAX_SIZE_INDEX 35		//max block size 34GB
+#define ZLOC_EXTRA_DEBUGGING
 #include "zloc.h"
 #define _TIMESPEC_DEFINED
 #ifdef _WIN32
@@ -1346,14 +1347,6 @@ int main() {
 	_ReSeed(&random, time);
 	//_ReSeed(&random, 180000);
 	//_ReSeed(&random, 123456);
-
-	PrintTestResult("Test: Remote memory management, Reallocation", TestRemoteMemoryReallocation(zloc__MEGABYTE(16), zloc__KILOBYTE(1)));
-	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 512b - 4kb", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(16), 512, 512, zloc__KILOBYTE(4), &random));
-	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 2MB", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(16), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(2), &random));
-	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 4MB", TestRemoteMemoryReallocationIterations(10000, zloc__MEGABYTE(64), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(4), &random));
-	PrintTestResult("Test: Remote memory management, Reallocation until full 10000 iterations 256kb - 4MB with Freeing", TestRemoteMemoryReallocationIterationsFreeing(10000, zloc__MEGABYTE(64), zloc__KILOBYTE(256), zloc__KILOBYTE(256), zloc__MEGABYTE(4), &random));
-	PrintTestResult("Test: Remote memory management, 10000 iterations, allocate 1MB - 64mb, add 128mb pools as needed.", TestRemoteMemoryReallocationIterationsFreeing(10000, zloc__MEGABYTE(128), zloc__MEGABYTE(1), zloc__MEGABYTE(1), zloc__MEGABYTE(16), &random));
-	return;
 
 #if defined(ZLOC_THREAD_SAFE)
 	PrintTestResult("Test: Multithreading test, 2 workers, 1000 iterations of allocating and freeing 16b-256kb in a 128MB pool", TestMultithreading(AllocationWorker, 1000, zloc__MEGABYTE(128), zloc__MINIMUM_BLOCK_SIZE, zloc__KILOBYTE(256), 2, &random));
