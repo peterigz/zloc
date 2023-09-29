@@ -544,6 +544,72 @@ int TestManyRandomAlignedAllocations(zloc_uint iterations, zloc_size pool_size, 
 	return result;
 }
 
+int TestManyRandomMixedAlignedAllocations(zloc_uint iterations, zloc_size pool_size, zloc_size min_allocation_size, zloc_size max_allocation_size, zloc_random *random) {
+	int result = 1;
+	void *memory = malloc(pool_size);
+	memset(memory, 0, pool_size);
+	zloc_allocator *allocator = zloc_InitialiseAllocatorWithPool(memory, pool_size);
+	assert(zloc_VerifySegregatedLists(allocator) == zloc__OK);
+	zloc_size alignments[7] = { 16, 32, 64, 128, 256, 512, 1024 };
+	if (!allocator) {
+		result = 0;
+		zloc_free_memory(memory);
+	}
+	else {
+		void *allocations[100];
+		memset(allocations, 0, sizeof(void*) * 100);
+		//Do a bunch of normal allocations first
+		for (int i = 0; i != iterations; ++i) {
+			int index = rand() % 100;
+			if (allocations[index]) {
+				zloc_Free(allocator, allocations[index]);
+				allocations[index] = 0;
+			}
+			else {
+				zloc_size allocation_size = (zloc_size)_zloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+				//zloc_size allocation_size = (rand() % max_allocation_size) + min_allocation_size;
+				allocations[index] = zloc_Allocate(allocator, allocation_size);
+				if (allocations[index]) {
+					//Do a memset set to test if we're overwriting block headers
+					memset(allocations[index], 7, allocation_size);
+				}
+			}
+			assert(zloc_VerifyBlocks(zloc__allocator_first_block(allocator), 0, 0) == zloc__OK);
+		}
+		for (int i = 0; i != iterations; ++i) {
+			int index = rand() % 100;
+			if (allocations[index]) {
+				zloc_Free(allocator, allocations[index]);
+				allocations[index] = 0;
+			}
+			else {
+				int type = rand() % 2;
+				if (type == 0) {
+					zloc_size allocation_size = (zloc_size)_zloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+					int alignment = rand() % 7;
+					allocations[index] = zloc_AllocateAligned(allocator, allocation_size, alignments[alignment]);
+					if (allocations[index]) {
+						//Do a memset set to test if we're overwriting block headers
+						memset(allocations[index], 7, allocation_size);
+					}
+				}
+				else {
+					zloc_size allocation_size = (zloc_size)_zloc_random_range(random, max_allocation_size - min_allocation_size) + min_allocation_size;
+					int alignment = rand() % 7;
+					allocations[index] = zloc_Allocate(allocator, allocation_size);
+					if (allocations[index]) {
+						//Do a memset set to test if we're overwriting block headers
+						memset(allocations[index], 7, allocation_size);
+					}
+				}
+			}
+			assert(zloc_VerifyBlocks(zloc__allocator_first_block(allocator), 0, 0) == zloc__OK);
+		}
+		zloc_free_memory(memory);
+	}
+	return result;
+}
+
 int TestManyAlignedAllocationsAndFreesAddPools(zloc_uint iterations, zloc_size pool_size, zloc_size min_allocation_size, zloc_size max_allocation_size, zloc_random *random) {
 	int result = 1;
 	void *memory[8];

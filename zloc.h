@@ -101,7 +101,7 @@ extern "C" {
 		zloc__MINIMUM_BLOCK_SIZE = 16,
 		zloc__BLOCK_SIZE_OVERHEAD = sizeof(zloc_size),
 		zloc__POINTER_SIZE = sizeof(void*),
-        zloc__SMALLEST_CATEGORY = (1 << (zloc__SECOND_LEVEL_INDEX_LOG2 + MEMORY_ALIGNMENT_LOG2))
+		zloc__SMALLEST_CATEGORY = (1 << (zloc__SECOND_LEVEL_INDEX_LOG2 + MEMORY_ALIGNMENT_LOG2))
 	};
 
 	typedef enum zloc__boundary_tag_flags {
@@ -446,9 +446,9 @@ extern "C" {
 
 	ZLOC_API void zloc_AddRemotePool(zloc_allocator *allocator, void *block_memory, zloc_size block_memory_size, zloc_size remote_pool_size);
 
-    ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block);
+	ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block);
 
-    ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block);
+	ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block);
 
 #endif
 
@@ -458,11 +458,11 @@ extern "C" {
 
 	static inline void zloc__map(zloc_size size, zloc_index *fli, zloc_index *sli) {
 		*fli = zloc__scan_reverse(size);
-        if(*fli <= zloc__SECOND_LEVEL_INDEX_LOG2) {
-            *fli = 0;
-            *sli = (int)size / (zloc__SMALLEST_CATEGORY / zloc__SECOND_LEVEL_INDEX_COUNT);
-            return;
-        }
+		if (*fli <= zloc__SECOND_LEVEL_INDEX_LOG2) {
+			*fli = 0;
+			*sli = (int)size / (zloc__SMALLEST_CATEGORY / zloc__SECOND_LEVEL_INDEX_COUNT);
+			return;
+		}
 		size = size & ~(1 << *fli);
 		*sli = (zloc_index)(size >> (*fli - zloc__SECOND_LEVEL_INDEX_LOG2)) % zloc__SECOND_LEVEL_INDEX_COUNT;
 	}
@@ -730,6 +730,9 @@ extern "C" {
 				}
 			}
 		}
+		if (allocator->first_level_bitmap & (ZLOC_ONE << fli)) {
+			ZLOC_ASSERT(allocator->second_level_bitmaps[fli] > 0);
+		}
 		zloc__mark_block_as_used(block);
 #ifdef ZLOC_EXTRA_DEBUGGING
 		zloc__verify_lists(allocator);
@@ -866,11 +869,11 @@ extern "C" {
 
 //Definitions
 ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block) {
-    return (char*)block + sizeof(zloc_header);
+	return (char*)block + sizeof(zloc_header);
 }
 
 ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block) {
-    return (void*)((char*)block - zloc__MINIMUM_BLOCK_SIZE);
+	return (void*)((char*)block - zloc__MINIMUM_BLOCK_SIZE);
 }
 
 zloc_allocator *zloc_InitialiseAllocator(void *memory) {
@@ -1044,6 +1047,7 @@ void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
 }
 
 void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size alignment) {
+	zloc__lock_thread_access;
 	zloc_size adjusted_size = zloc__adjust_size(size, allocator->minimum_allocation_size, alignment);
 	zloc_size gap_minimum = sizeof(zloc_header);
 	zloc_size size_with_gap = zloc__adjust_size(adjusted_size + alignment + gap_minimum, allocator->minimum_allocation_size, alignment);
@@ -1079,6 +1083,7 @@ void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size 
 		return 0;
 	}
 
+	zloc__unlock_thread_access;
 	return zloc__block_user_ptr(block);
 }
 
