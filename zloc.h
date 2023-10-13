@@ -7,8 +7,6 @@
 #ifndef ZLOC_INCLUDE_H
 #define ZLOC_INCLUDE_H
 
-//#define ZLOC_DEV_MODE
-
 #include <stdlib.h>
 #include <stddef.h>
 #include <assert.h>
@@ -866,7 +864,7 @@ extern "C" {
 #endif
 
 //Implementation
-#if defined(ZLOC_IMPLEMENTATION) || defined(ZLOC_DEV_MODE)
+#if defined(ZLOC_IMPLEMENTATION)
 
 #include <math.h>
 #include <limits.h>
