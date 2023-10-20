@@ -11,8 +11,8 @@
 //#define ZLOC_ENABLE_REMOTE_MEMORY
 #define ZLOC_MAX_SIZE_INDEX 35		//max block size 34GB
 #define ZLOC_EXTRA_DEBUGGING
-//#include "minimal/zloc_min.h"
-#include "zloc.h"
+#include "minimal/zloc_min.h"
+//#include "zloc.h"
 #define _TIMESPEC_DEFINED
 #ifdef _WIN32
 #ifdef ZLOC_THREAD_SAFE	
