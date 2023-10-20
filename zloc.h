@@ -1084,6 +1084,7 @@ void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size 
 		ZLOC_ASSERT(zloc__ptr_is_aligned(zloc__block_user_ptr(block), alignment));	//pointer not aligned to requested alignment
 	}
 	else {
+		zloc__unlock_thread_access;
 		return 0;
 	}
 
