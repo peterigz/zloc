@@ -1178,6 +1178,8 @@ int zloc_SafeCopyBlock(void *dst_block_start, void *dst, void *src, zloc_size si
 	return 1;
 }
 
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+
 zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header *first_block) {
 	zloc_pool_stats_t stats = { 0 };
 	zloc_header *current_block = first_block;
@@ -1201,7 +1203,6 @@ zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header *first_block) {
 	return stats;
 }
 
-#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
 /*
 	Standard callbacks, you can copy paste these to replace with your own as needed to add any extra functionality
 	that you might need
