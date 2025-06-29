@@ -63,6 +63,7 @@ typedef size_t zloc_fl_bitmap;
 #define ZLOC_ERROR_COLOR "\033[31m"
 #endif
 
+//Redo this and output to a user defined log file instead
 #ifdef ZLOC_OUTPUT_ERROR_MESSAGES
 #include <stdio.h>
 #define ZLOC_PRINT_ERROR(message_f, ...) printf(message_f"\033[0m", __VA_ARGS__)
@@ -147,7 +148,6 @@ extern "C" {
 #if defined(ZLOC_THREAD_SAFE)
 		/* Multithreading protection*/
 		volatile zloc_thread_access access;
-		volatile zloc_thread_access access_override;
 #endif
 #if defined(ZLOC_ENABLE_REMOTE_MEMORY)
 		void *user_data;
@@ -172,12 +172,19 @@ extern "C" {
 #if defined(ZLOC_ENABLE_REMOTE_MEMORY)
 	/*
 	A minimal remote header block. You can define your own header to store additional information but it must include
-	size and memory_offset in the first 2 fields.
+	"zloc_size" size and memory_offset in the first 2 fields.
 	*/
 	typedef struct zloc_remote_header {
 		zloc_size size;
 		zloc_size memory_offset;
 	} zloc_remote_header;
+
+	typedef struct zloc_pool_stats_t {
+		int used_blocks;
+		int free_blocks;
+		zloc_size free_size;
+		zloc_size used_size;
+	} zloc_pool_stats_t;
 
 #define zloc__map_size (remote_size ? remote_size : size)
 #define zloc__do_size_class_callback(block) allocator->get_block_size_callback(block)
@@ -387,6 +394,7 @@ extern "C" {
 	ZLOC_API void zloc_SetMinimumAllocationSize(zloc_allocator *allocator, zloc_size size);
 
 #if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+	zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header *first_block);
 	/*
 		Initialise an allocator and a pool at the same time and flag it for use as a remote memory manager.
 		The data stucture to store the allocator will be stored at the beginning of the memory you pass to the function and the remaining memory will
@@ -447,6 +455,45 @@ extern "C" {
 	ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block);
 
 	ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block);
+
+	//Very simple linear allocator.
+	typedef struct zloc_linear_allocator_t {
+		zloc_size buffer_size;
+		zloc_size current_offset;
+	} zloc_linear_allocator_t;
+
+	/*
+		Initialise a linear allocator. Best used for transient data. All memory allocated from here is
+		aligned to 8 bytes.
+		@param	void*			A pointer to a block of memory you want to use for the arena
+		@returns zloc_size		The size of the memory.
+	*/
+	zloc_linear_allocator_t *zloc_InitialiseLinearAllocator(void *memory, zloc_size size);
+
+	/*
+		Reset the linear allocator to 0 size used.
+	*/
+	void zloc_ResetLinearAllocator(zloc_linear_allocator_t *allocator);
+
+	/*
+		Allocate a block of memory from a linear allocator
+		@param	zloc_linear_allocator*			A pointer to a linear allocator
+		@returns zloc_size		                The size of the memory that you want to allocate from the linear allocator
+	*/
+	void *zloc_LinearAllocation(zloc_linear_allocator_t *allocator, zloc_size size_requested);
+
+	/*  Get the current offset of the allocator. This can be use to reset to a point in the allocator rather
+		then reset the whole thing
+		@param	zloc_linear_allocator*			A pointer to a linear allocator
+	*/
+	zloc_size zloc_GetMarker(zloc_linear_allocator_t *allocator);
+
+	/*  Reset the allocator to a specific point that you got using zloc_GetMarker
+		then reset the whole thing
+		@param	zloc_linear_allocator*			A pointer to a linear allocator
+		@param	zloc_size			            The marker offset to reset to
+	*/
+	void zloc_ResetToMarker(zloc_linear_allocator_t *allocator, zloc_size marker);
 
 #endif
 
@@ -581,20 +628,16 @@ extern "C" {
 #if defined(ZLOC_THREAD_SAFE)
 
 #define zloc__lock_thread_access												\
-	if (allocator->access + allocator->access_override != 2) {					\
-		do {																	\
-		} while (0 != zloc__compare_and_exchange(&allocator->access, 1, 0));	\
-	}																			\
+	do {																	\
+	} while (0 != zloc__compare_and_exchange(&allocator->access, 1, 0));	\
 	ZLOC_ASSERT(allocator->access != 0);
 
-#define zloc__unlock_thread_access allocator->access_override = 0; allocator->access = 0;
-#define zloc__access_override allocator->access_override = 1;
+#define zloc__unlock_thread_access allocator->access = 0;
 
 #else
 
 #define zloc__lock_thread_access
 #define zloc__unlock_thread_access 
-#define zloc__access_override
 
 #endif
 	void *zloc__allocate(zloc_allocator *allocator, zloc_size size, zloc_size remote_size);
@@ -652,7 +695,7 @@ extern "C" {
 		zloc__map(zloc__do_size_class_callback(block), &fli, &sli);
 		zloc_header *current_block_in_free_list = allocator->segregated_lists[fli][sli];
 		//If you hit this assert then it's likely that at somepoint in your code you're trying to free an allocation
-		//that was already freed.
+		//that was already freed or trying to free something that wasn't allocated by the allocator.
 		ZLOC_ASSERT(block != current_block_in_free_list);
 		//Insert the block into the list by updating the next and prev free blocks of
 		//this and the current block in the free list. The current block in the free
@@ -691,16 +734,15 @@ extern "C" {
 			//If there are more free blocks in this size class then shift the next one down and terminate the prev_free_block
 			allocator->segregated_lists[fli][sli] = block->next_free_block;
 			allocator->segregated_lists[fli][sli]->prev_free_block = zloc__null_block(allocator);
-		}
-		else {
+		} else {
 			//There's no more free blocks in this size class so flag the second level bitmap for this class to 0.
 			allocator->segregated_lists[fli][sli] = zloc__null_block(allocator);
 			allocator->second_level_bitmaps[fli] &= ~(1U << sli);
 			if (allocator->second_level_bitmaps[fli] == 0) {
 				//And if the second level bitmap is 0 then the corresponding bit in the first lebel can be zero'd too.
 				allocator->first_level_bitmap &= ~(ZLOC_ONE << fli);
-			}
 		}
+	}
 		if (allocator->first_level_bitmap & (ZLOC_ONE << fli)) {
 			ZLOC_ASSERT(allocator->second_level_bitmaps[fli] > 0);
 		}
@@ -825,13 +867,11 @@ extern "C" {
 		//we stick to the paper and just move on to the next class up to keep a O1 speed at the cost of some extra fragmentation
 		if (zloc__has_free_block(allocator, fli, sli) && zloc__do_size_class_callback(allocator->segregated_lists[fli][sli]) >= zloc__map_size) {
 			zloc_header *block = zloc__pop_block(allocator, fli, sli);
-			zloc__unlock_thread_access;
 			return block;
 		}
 		if (sli == zloc__SECOND_LEVEL_INDEX_COUNT - 1) {
 			sli = -1;
-		}
-		else {
+		} else {
 			sli = zloc__find_next_size_up(allocator->second_level_bitmaps[fli], sli);
 		}
 		if (sli == -1) {
@@ -840,14 +880,11 @@ extern "C" {
 				sli = zloc__scan_forward(allocator->second_level_bitmaps[fli]);
 				zloc_header *block = zloc__pop_block(allocator, fli, sli);
 				zloc_header *split_block = zloc__call_maybe_split_block;
-				zloc__unlock_thread_access;
 				return split_block;
 			}
-		}
-		else {
+		} else {
 			zloc_header *block = zloc__pop_block(allocator, fli, sli);
 			zloc_header *split_block = zloc__call_maybe_split_block;
-			zloc__unlock_thread_access;
 			return split_block;
 		}
 
@@ -997,6 +1034,7 @@ void *zloc_Allocate(zloc_allocator *allocator, zloc_size size) {
 	zloc_header *block = zloc__find_free_block(allocator, size, remote_size);
 
 	if (block) {
+		zloc__unlock_thread_access;
 		return zloc__block_user_ptr(block);
 	}
 
@@ -1012,6 +1050,7 @@ void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
 	if (ptr && size == 0) {
 		zloc__unlock_thread_access;
 		zloc_Free(allocator, ptr);
+		zloc__lock_thread_access;
 	}
 
 	if (!ptr) {
@@ -1026,16 +1065,20 @@ void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
 	zloc_size adjusted_size = zloc__adjust_size(size, allocator->minimum_allocation_size, zloc__MEMORY_ALIGNMENT);
 	zloc_size combined_size = current_size + zloc__block_size(next_block);
 	if ((!zloc__next_block_is_free(block) || adjusted_size > combined_size) && adjusted_size > current_size) {
-		zloc__access_override;
-		allocation = zloc_Allocate(allocator, size);
+		zloc_header *block = zloc__find_free_block(allocator, adjusted_size, 0);
+		if (block) {
+			allocation = zloc__block_user_ptr(block);
+		}
+
 		if (allocation) {
 			zloc_size smallest_size = zloc__Min(current_size, size);
 			memcpy(allocation, ptr, smallest_size);
 			zloc__do_unable_to_reallocate_callback;
+			zloc__unlock_thread_access;
 			zloc_Free(allocator, ptr);
+			zloc__lock_thread_access;
 		}
-	}
-	else {
+	} else {
 		//Reallocation is possible
 		if (adjusted_size > current_size)
 		{
@@ -1082,8 +1125,7 @@ void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size 
 			zloc__block_set_used(block);
 		}
 		ZLOC_ASSERT(zloc__ptr_is_aligned(zloc__block_user_ptr(block), alignment));	//pointer not aligned to requested alignment
-	}
-	else {
+	} else {
 		zloc__unlock_thread_access;
 		return 0;
 	}
@@ -1106,6 +1148,57 @@ int zloc_Free(zloc_allocator *allocator, void* allocation) {
 	zloc__push_block(allocator, block);
 	zloc__unlock_thread_access;
 	return 1;
+}
+
+int zloc_SafeCopy(void *dst, void *src, zloc_size size) {
+	zloc_header *block = zloc__block_from_allocation(dst);
+	if (size > block->size) {
+		assert(0);  //Trying to copy outside of the memory block
+		return 0;
+	}
+	zloc_header *next_physical_block = zloc__next_physical_block(block);
+	ptrdiff_t diff_check = (ptrdiff_t)((char *)dst + size) - (ptrdiff_t)next_physical_block;
+	if (diff_check > 0) {
+		assert(0);  //Trying to copy outside of the memory block
+		return 0;
+	}
+	memcpy(dst, src, size);
+	return 1;
+}
+
+int zloc_SafeCopyBlock(void *dst_block_start, void *dst, void *src, zloc_size size) {
+	zloc_header *block = zloc__block_from_allocation(dst_block_start);
+	zloc_header *next_physical_block = zloc__next_physical_block(block);
+	ptrdiff_t diff_check = (ptrdiff_t)((char *)dst + size) - (ptrdiff_t)next_physical_block;
+	if (diff_check > 0) {
+		assert(0);  //Trying to copy outside of the memory block
+		return 0;
+	}
+	memcpy(dst, src, size);
+	return 1;
+}
+
+zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header *first_block) {
+	zloc_pool_stats_t stats = { 0 };
+	zloc_header *current_block = first_block;
+	while (!zloc__is_last_block_in_pool(current_block)) {
+		if (zloc__is_free_block(current_block)) {
+			stats.free_blocks++;
+			stats.free_size += zloc__block_size(current_block);
+		} else {
+			stats.used_blocks++;
+			stats.used_size += zloc__block_size(current_block);
+		}
+		current_block = zloc__next_physical_block(current_block);
+	}
+	if (zloc__is_free_block(current_block)) {
+		stats.free_blocks++;
+		stats.free_size += zloc__block_size(current_block);
+	} else {
+		stats.used_blocks++;
+		stats.used_size += zloc__block_size(current_block);
+	}
+	return stats;
 }
 
 #if defined(ZLOC_ENABLE_REMOTE_MEMORY)
@@ -1147,7 +1240,7 @@ zloc_size zloc_CalculateRemoteBlockPoolSize(zloc_allocator *allocator, zloc_size
 	ZLOC_ASSERT(allocator->block_extension_size);	//You must set the block extension size first
 	ZLOC_ASSERT(allocator->minimum_allocation_size);		//You must set the number of bytes per block
 	return (sizeof(zloc_header) + allocator->block_extension_size) * (remote_pool_size / allocator->minimum_allocation_size) + zloc__BLOCK_POINTER_OFFSET;
-}
+	}
 
 void zloc_AddRemotePool(zloc_allocator *allocator, void *block_memory, zloc_size block_memory_size, zloc_size remote_pool_size) {
 	ZLOC_ASSERT(allocator->add_pool_callback);	//You must set all the necessary callbacks to handle remote memory management
@@ -1193,6 +1286,7 @@ void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size si
 	if (ptr && remote_size == 0) {
 		zloc__unlock_thread_access;
 		zloc_FreeRemote(allocator, ptr);
+		zloc__lock_thread_access;
 	}
 
 	if (!ptr) {
@@ -1209,14 +1303,18 @@ void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size si
 	zloc_size combined_size = current_size + zloc__block_size(next_block);
 	zloc_size combined_remote_size = current_remote_size + zloc__do_size_class_callback(next_block);
 	if ((!zloc__next_block_is_free(block) || adjusted_size > combined_size || remote_size > combined_remote_size) && (remote_size > current_remote_size)) {
-		zloc__access_override;
-		allocation = zloc__allocate(allocator, size, remote_size);
+		zloc_header *block = zloc__find_free_block(allocator, size, remote_size);
+		if (block) {
+			allocation = zloc__block_user_ptr(block);
+		}
+
 		if (allocation) {
 			zloc__do_unable_to_reallocate_callback;
+			zloc__unlock_thread_access;
 			zloc_Free(allocator, ptr);
+			zloc__lock_thread_access;
 		}
-	}
-	else {
+	} else {
 		//Reallocation is possible
 		if (remote_size > current_remote_size)
 		{
@@ -1241,7 +1339,61 @@ int zloc_FreeRemote(zloc_allocator *allocator, void* block_extension) {
 	void *allocation = (char*)block_extension - zloc__MINIMUM_BLOCK_SIZE;
 	return zloc_Free(allocator, allocation);
 }
+
+zloc_linear_allocator_t *zloc_InitialiseLinearAllocator(void *memory, zloc_size size) {
+	if (!memory) {
+		ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", ZLOC_ERROR_NAME);
+		return NULL;
+	}
+	if (size <= sizeof(zloc_linear_allocator_t) + zloc__MINIMUM_BLOCK_SIZE) {
+		ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: Size of linear allocotor size is too small. It must be a mimimum of %llu\n", ZLOC_ERROR_NAME, sizeof(zloc_linear_allocator_t) + zloc__MINIMUM_BLOCK_SIZE);
+		return NULL;
+	}
+	zloc_linear_allocator_t *allocator = (zloc_linear_allocator_t *)memory;
+	memset(allocator, 0, sizeof(zloc_linear_allocator_t));
+	allocator->buffer_size = size;
+	allocator->current_offset = sizeof(zloc_linear_allocator_t);
+	return allocator;
+}
+
+void zloc_ResetLinearAllocator(zloc_linear_allocator_t *allocator) {
+	allocator->current_offset = sizeof(zloc_linear_allocator_t);
+}
+
+void *zloc_LinearAllocation(zloc_linear_allocator_t *allocator, zloc_size size_requested) {
+	if (!allocator) return NULL;
+
+	zloc_size actual_size = size_requested < zloc__MINIMUM_BLOCK_SIZE ? zloc__MINIMUM_BLOCK_SIZE : size_requested;
+	zloc_size alignment = sizeof(void *);
+
+	char *current_ptr = (char *)allocator + allocator->current_offset;
+	void *aligned_address = (void *)(((uintptr_t)current_ptr + alignment - 1) & ~(alignment - 1));
+
+	zloc_size new_offset = (zloc_size)((char *)aligned_address - (char *)allocator) + actual_size;
+
+	if (new_offset > allocator->buffer_size) {
+		ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: Out of memory in linear allocator.\n", ZLOC_ERROR_NAME);
+		return NULL;
+	}
+
+	allocator->current_offset = new_offset;
+	return aligned_address;
+}
+
+zloc_size zloc_GetMarker(zloc_linear_allocator_t *allocator) {
+	ZLOC_ASSERT(allocator);     //Not a valid allocator!
+	return allocator->current_offset;
+}
+
+void zloc_ResetToMarker(zloc_linear_allocator_t *allocator, zloc_size marker) {
+	ZLOC_ASSERT(allocator);     //Not a valid allocator!
+	//marker point not valid!
+	ZLOC_ASSERT(marker >= sizeof(zloc_linear_allocator_t) && marker <= allocator->current_offset && marker <= allocator->buffer_size);     //Not a valid allocator!
+	allocator->current_offset = marker;
+}
+
 #endif
+
 
 #endif
 
