@@ -1,10 +1,6 @@
-
 /*	Pocket Allocator, a Two Level Segregated Fit memory allocator
 
 	This software is dual-licensed. See bottom of file for license details.
-
-	This software also includes an offset allocator written by Sebastian Aaltonen found here https://github.com/sebbbi/OffsetAllocator
-	The version here has been converted to c. The original license for that is also included at the bottom of this file.
 */
 
 #ifndef ZLOC_INCLUDE_H
@@ -23,14 +19,11 @@
 #endif
 
 typedef int zloc_index;
-typedef unsigned char zloc_u8;
-typedef unsigned short zloc_u16;
 typedef unsigned int zloc_sl_bitmap;
 typedef unsigned int zloc_uint;
 typedef unsigned int zloc_thread_access;
-typedef zloc_uint zloc_gpu_node_index;
 typedef int zloc_bool;
-typedef void* zloc_pool;
+typedef void *zloc_pool;
 
 #if !defined (ZLOC_ASSERT)
 #define ZLOC_ASSERT assert
@@ -97,144 +90,111 @@ extern "C" {
 
 #define zloc__MAXIMUM_BLOCK_SIZE (ZLOC_ONE << ZLOC_MAX_SIZE_INDEX)
 
-enum zloc__constants {
-	zloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
-	zloc__SECOND_LEVEL_INDEX_LOG2 = 5,
-	zloc__FIRST_LEVEL_INDEX_COUNT = ZLOC_MAX_SIZE_INDEX,
-	zloc__SECOND_LEVEL_INDEX_COUNT = 1 << zloc__SECOND_LEVEL_INDEX_LOG2,
-	zloc__BLOCK_POINTER_OFFSET = sizeof(void*) + sizeof(zloc_size),
-	zloc__MINIMUM_BLOCK_SIZE = 16,
-	zloc__BLOCK_SIZE_OVERHEAD = sizeof(zloc_size),
-	zloc__POINTER_SIZE = sizeof(void*),
-	zloc__SMALLEST_CATEGORY = (1 << (zloc__SECOND_LEVEL_INDEX_LOG2 + MEMORY_ALIGNMENT_LOG2)),
-	//For GPU allocator:
-	zloc__NUM_TOP_BINS = 32,
-	zloc__BINS_PER_LEAF = 8,
-	zloc__TOP_BINS_INDEX_SHIFT = 3,
-	zloc__LEAF_BINS_INDEX_MASK = 0x7,
-	zloc__NUM_LEAF_BINS = zloc__NUM_TOP_BINS * zloc__BINS_PER_LEAF,
-	zloc__UNUSED = 0xffffffff,
-	zloc__NO_SPACE = 0xffffffff,
-	zloc__MANTISSA_BITS = 3,
-	zloc__MANTISSA_VALUE = 1 << zloc__MANTISSA_BITS,
-	zloc__MANTISSA_MASK = zloc__MANTISSA_VALUE - 1,
-};
+	enum zloc__constants {
+		zloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
+		zloc__SECOND_LEVEL_INDEX_LOG2 = 5,
+		zloc__FIRST_LEVEL_INDEX_COUNT = ZLOC_MAX_SIZE_INDEX,
+		zloc__SECOND_LEVEL_INDEX_COUNT = 1 << zloc__SECOND_LEVEL_INDEX_LOG2,
+		zloc__BLOCK_POINTER_OFFSET = sizeof(void *) + sizeof(zloc_size),
+		zloc__MINIMUM_BLOCK_SIZE = 16,
+		zloc__BLOCK_SIZE_OVERHEAD = sizeof(zloc_size),
+		zloc__POINTER_SIZE = sizeof(void *),
+		zloc__SMALLEST_CATEGORY = (1 << (zloc__SECOND_LEVEL_INDEX_LOG2 + MEMORY_ALIGNMENT_LOG2))
+	};
 
-typedef enum zloc__boundary_tag_flags {
-	zloc__BLOCK_IS_FREE = 1 << 0,
-	zloc__PREV_BLOCK_IS_FREE = 1 << 1,
-} zloc__boundary_tag_flags;
+	typedef enum zloc__boundary_tag_flags {
+		zloc__BLOCK_IS_FREE = 1 << 0,
+		zloc__PREV_BLOCK_IS_FREE = 1 << 1,
+	} zloc__boundary_tag_flags;
 
-typedef enum zloc__error_codes {
-	zloc__OK,
-	zloc__INVALID_FIRST_BLOCK,
-	zloc__INVALID_BLOCK_FOUND,
-	zloc__PHYSICAL_BLOCK_MISALIGNMENT,
-	zloc__INVALID_SEGRATED_LIST,
-	zloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST,
-	zloc__SECOND_LEVEL_BITMAPS_NOT_INITIALISED
-} zloc__error_codes;
+	typedef enum zloc__error_codes {
+		zloc__OK,
+		zloc__INVALID_FIRST_BLOCK,
+		zloc__INVALID_BLOCK_FOUND,
+		zloc__PHYSICAL_BLOCK_MISALIGNMENT,
+		zloc__INVALID_SEGRATED_LIST,
+		zloc__WRONG_BLOCK_SIZE_FOUND_IN_SEGRATED_LIST,
+		zloc__SECOND_LEVEL_BITMAPS_NOT_INITIALISED
+	} zloc__error_codes;
 
-typedef enum zloc__thread_ops {
-	zloc__FREEING_BLOCK = 1 << 0,
-	zloc__ALLOCATING_BLOCK = 1 << 1
-} zloc__thread_ops;
+	typedef enum zloc__thread_ops {
+		zloc__FREEING_BLOCK = 1 << 0,
+		zloc__ALLOCATING_BLOCK = 1 << 1
+	} zloc__thread_ops;
 
-/*
-	Each block has a header that if used only has a pointer to the previous physical block
-	and the size. If the block is free then the prev and next free blocks are also stored.
-*/
-typedef struct zloc_header {
-	struct zloc_header *prev_physical_block;
-	/*	Note that the size is either 4 or 8 bytes aligned so the boundary tag (2 flags denoting
-		whether this or the previous block is free) can be stored in the first 2 least
-		significant bits	*/
-	zloc_size size;
 	/*
-	User allocation will start here when the block is used. When the block is free prev and next
-	are pointers in a linked list of free blocks within the same class size of blocks
+		Each block has a header that if used only has a pointer to the previous physical block
+		and the size. If the block is free then the prev and next free blocks are also stored.
 	*/
-	struct zloc_header *prev_free_block;
-	struct zloc_header *next_free_block;
-} zloc_header;
+	typedef struct zloc_header {
+		struct zloc_header *prev_physical_block;
+		/*	Note that the size is either 4 or 8 bytes aligned so the boundary tag (2 flags denoting
+			whether this or the previous block is free) can be stored in the first 2 least
+			significant bits	*/
+		zloc_size size;
+		/*
+		User allocation will start here when the block is used. When the block is free prev and next
+		are pointers in a linked list of free blocks within the same class size of blocks
+		*/
+		struct zloc_header *prev_free_block;
+		struct zloc_header *next_free_block;
+	} zloc_header;
 
-typedef struct zloc_allocator {
-	/*	This is basically a terminator block that free blocks can point to if they're at the end
-		of a free list. */
-	zloc_header null_block;
+	typedef struct zloc_allocator {
+		/*	This is basically a terminator block that free blocks can point to if they're at the end
+			of a free list. */
+		zloc_header null_block;
 #if defined(ZLOC_THREAD_SAFE)
-	/* Multithreading protection*/
-	volatile zloc_thread_access access;
+		/* Multithreading protection*/
+		volatile zloc_thread_access access;
 #endif
-	zloc_size minimum_allocation_size;
-	/*	Here we store all of the free block data. first_level_bitmap is either a 32bit int
-	or 64bit depending on whether zloc__64BIT is set. Second_level_bitmaps are an array of 32bit
-	ints. segregated_lists is a two level array pointing to free blocks or null_block if the list
-	is empty. */
-	zloc_fl_bitmap first_level_bitmap;
-	zloc_sl_bitmap second_level_bitmaps[zloc__FIRST_LEVEL_INDEX_COUNT];
-	zloc_header *segregated_lists[zloc__FIRST_LEVEL_INDEX_COUNT][zloc__SECOND_LEVEL_INDEX_COUNT];
-} zloc_allocator;
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+		void *user_data;
+		zloc_size(*get_block_size_callback)(const zloc_header *block);
+		void(*merge_next_callback)(void *user_data, zloc_header *block, zloc_header *next_block);
+		void(*merge_prev_callback)(void *user_data, zloc_header *prev_block, zloc_header *block);
+		void(*split_block_callback)(void *user_data, zloc_header *block, zloc_header *trimmed_block, zloc_size remote_size);
+		void(*add_pool_callback)(void *user_data, void *block_extension);
+		void(*unable_to_reallocate_callback)(void *user_data, zloc_header *block, zloc_header *new_block);
+		zloc_size block_extension_size;
+#endif
+		zloc_size minimum_allocation_size;
+		/*	Here we store all of the free block data. first_level_bitmap is either a 32bit int
+		or 64bit depending on whether zloc__64BIT is set. Second_level_bitmaps are an array of 32bit
+		ints. segregated_lists is a two level array pointing to free blocks or null_block if the list
+		is empty. */
+		zloc_fl_bitmap first_level_bitmap;
+		zloc_sl_bitmap second_level_bitmaps[zloc__FIRST_LEVEL_INDEX_COUNT];
+		zloc_header *segregated_lists[zloc__FIRST_LEVEL_INDEX_COUNT][zloc__SECOND_LEVEL_INDEX_COUNT];
+	} zloc_allocator;
 
-typedef struct zloc_pool_stats_t {
-	int used_blocks;
-	int free_blocks;
-	zloc_size largest_free_block;
-	zloc_size largest_used_block;
-	zloc_size free_size;
-	zloc_size used_size;
-} zloc_pool_stats_t;
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+	/*
+	A minimal remote header block. You can define your own header to store additional information but it must include
+	"zloc_size" size and memory_offset in the first 2 fields.
+	*/
+	typedef struct zloc_remote_header {
+		zloc_size size;
+		zloc_size memory_offset;
+	} zloc_remote_header;
 
+	typedef struct zloc_pool_stats_t {
+		int used_blocks;
+		int free_blocks;
+		zloc_size free_size;
+		zloc_size used_size;
+	} zloc_pool_stats_t;
 
-/*
-Offset allocator types
-*/
-typedef struct zloc_gpu_allocation_t {
-	zloc_uint offset;
-	zloc_gpu_node_index metadata; // internal: node index
-} zloc_gpu_allocation_t;
-
-typedef struct zloc_gpu_storage_report_t {
-	zloc_uint totalFreeSpace;
-	zloc_uint largestFreeRegion;
-} zloc_gpu_storage_report_t;
-
-typedef struct zloc_gpu_region_t {
-	zloc_uint size;
-	zloc_uint count;
-} zloc_gpu_region_t;
-
-typedef struct zloc_gpu_storage_report_full_t {
-	zloc_gpu_region_t freeRegions[zloc__NUM_LEAF_BINS];
-} zloc_gpu_storage_report_full_t;
-
-typedef struct zloc_gpu_node_t {
-	zloc_uint dataOffset;
-	zloc_uint dataSize;
-	zloc_gpu_node_index binListPrev;
-	zloc_gpu_node_index binListNext;
-	zloc_gpu_node_index neighbourPrev;
-	zloc_gpu_node_index neighbourNext;
-	int used; // TODO: Merge as bit flag
-} zloc_gpu_node_t;
-
-typedef struct zloc_gpu_allocator_t {
-	zloc_uint m_size;
-	zloc_uint m_maxAllocs;
-	zloc_uint m_freeStorage;
-
-	zloc_uint m_usedBinsTop;
-	zloc_u8 m_usedBins[zloc__NUM_TOP_BINS];
-	zloc_gpu_node_index m_binIndices[zloc__NUM_LEAF_BINS];
-
-	zloc_gpu_node_t *m_nodes;
-	zloc_gpu_node_index *m_freeNodes;
-	zloc_uint m_freeOffset;
-} zloc_gpu_allocator_t;
-/*
-	-- end of offset allocator types
-*/
-
+#define zloc__map_size (remote_size ? remote_size : size)
+#define zloc__do_size_class_callback(block) allocator->get_block_size_callback(block)
+#define zloc__do_merge_next_callback allocator->merge_next_callback(allocator->user_data, block, next_block)
+#define zloc__do_merge_prev_callback allocator->merge_prev_callback(allocator->user_data, prev_block, block)
+#define zloc__do_split_block_callback allocator->split_block_callback(allocator->user_data, block, trimmed, remote_size)
+#define zloc__do_add_pool_callback allocator->add_pool_callback(allocator->user_data, block)
+#define zloc__do_unable_to_reallocate_callback zloc_header *new_block = zloc__block_from_allocation(allocation); zloc_header *block = zloc__block_from_allocation(ptr); allocator->unable_to_reallocate_callback(allocator->user_data, block, new_block)
+#define zloc__block_extension_size (allocator->block_extension_size & ~1)
+#define zloc__call_maybe_split_block zloc__maybe_split_block(allocator, block, size, remote_size) 
+#else
 #define zloc__map_size size
 #define zloc__do_size_class_callback(block) zloc__block_size(block)
 #define zloc__do_merge_next_callback
@@ -244,6 +204,7 @@ typedef struct zloc_gpu_allocator_t {
 #define zloc__do_unable_to_reallocate_callback
 #define zloc__block_extension_size 0
 #define zloc__call_maybe_split_block zloc__maybe_split_block(allocator, block, size, 0) 
+#endif
 
 #if defined (_MSC_VER) && (_MSC_VER >= 1400) && (defined (_M_IX86) || defined (_M_X64))
 	/* Microsoft Visual C++ support on x86/X64 architectures. */
@@ -271,7 +232,7 @@ typedef struct zloc_gpu_allocator_t {
 
 #ifdef _WIN32
 #include <Windows.h>
-	static inline zloc_thread_access zloc__compare_and_exchange(volatile zloc_thread_access* target, zloc_thread_access value, zloc_thread_access original) {
+	static inline zloc_thread_access zloc__compare_and_exchange(volatile zloc_thread_access *target, zloc_thread_access value, zloc_thread_access original) {
 		return InterlockedCompareExchange(target, value, original);
 	}
 #endif
@@ -298,7 +259,7 @@ typedef struct zloc_gpu_allocator_t {
 #endif
 	}
 
-	static inline zloc_thread_access zloc__compare_and_exchange(volatile zloc_thread_access* target, zloc_thread_access value, zloc_thread_access original) {
+	static inline zloc_thread_access zloc__compare_and_exchange(volatile zloc_thread_access *target, zloc_thread_access value, zloc_thread_access original) {
 		return __sync_val_compare_and_swap(target, original, value);
 	}
 
@@ -428,69 +389,71 @@ typedef struct zloc_gpu_allocator_t {
 
 	@param zloc_allocator*			A pointer to an initialised allocator
 	@param zloc_size				The bytes per block you want it to be set to. Must be a power of 2
-	*/
+*/
 	ZLOC_API void zloc_SetMinimumAllocationSize(zloc_allocator *allocator, zloc_size size);
+	zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header *first_block);
+
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+	/*
+		Initialise an allocator and a pool at the same time and flag it for use as a remote memory manager.
+		The data stucture to store the allocator will be stored at the beginning of the memory you pass to the function and the remaining memory will
+		be used as the pool. Use with zloc_CalculateRemoteBlockPoolSize to allow for the number of memory ranges you might need to manage in the
+		remote memory pool(s)
+
+		@param	void*					A pointer to some previously allocated memory that was created with malloc, VirtualAlloc etc.
+		@param	zloc_size				The size of the memory you're passing
+		@returns zloc_allocator*		A pointer to a zloc_allocator which you'll need to use when calling zloc_AllocateRemote or zloc_FreeRemote.
+										If something went wrong then 0 is returned. Define ZLOC_OUTPUT_ERROR_MESSAGES before including this header
+										file to see any errors in the console.
+	*/
+	ZLOC_API zloc_allocator *zloc_InitialiseAllocatorForRemote(void *memory);
 
 	/*
-	API for the Offset Allocator	
+		When using an allocator for managing remote memory, you need to set the size of the struct that you will be using to store information about
+		the remote block of memory. This will be like an extension the existing zloc_header.
+
+		@param zloc_allocator*			A pointer to an initialised allocator
+		@param zloc_size				The size of the block extension. Will be aligned up to zloc__MEMORY_ALIGNMENT
 	*/
+	ZLOC_API void zloc_SetBlockExtensionSize(zloc_allocator *allocator, zloc_size size);
 
-	/**
-	 * Calculates the total memory size required for a GPU allocator.
-	 * @param max_allocations The maximum number of allocations the allocator will manage.
-	 * @return The required size in bytes for the allocator structure and its internal nodes.
-	 */
-	ZLOC_API zloc_size zloc_CalculateGPUAllocatorSize(zloc_uint max_allocations);
+	/*
+		Free a remote allocation from a zloc_allocator. You must have set up merging callbacks so that you can update your block extensions with the
+		necessary buffer sizes and offsets
 
-	/**
-	 * Retrieves the size of a specific GPU memory allocation.
-	 * @param gpu_allocator A pointer to the GPU allocator.
-	 * @param allocation The allocation handle to query.
-	 * @return The size of the allocated block in bytes, or 0 if the handle is invalid.
-	 */
-	ZLOC_API zloc_uint zloc_GPUAllocationSize(zloc_gpu_allocator_t *gpu_allocator, zloc_gpu_allocation_t allocation);
+		It's recommended to call this function with an assert: ZLOC_ASSERT(zloc_FreeRemote(allocator, allocation));
+		An error is also output to console as long as ZLOC_OUTPUT_ERROR_MESSAGES is defined.
 
-	/**
-	 * Generates a summary report of the GPU allocator's current state.
-	 * @param gpu_allocator A pointer to the GPU allocator.
-	 * @return A `zloc_gpu_storage_report_t` struct containing total free space and the largest contiguous free region.
-	 */
-	ZLOC_API zloc_gpu_storage_report_t zloc_GPUStorageReport(zloc_gpu_allocator_t *gpu_allocator);
+		@returns int		returns 1 if the allocation was successfully freed, 0 otherwise.
+	*/
+	ZLOC_API int zloc_FreeRemote(zloc_allocator *allocator, void *allocation);
 
-	/**
-	 * Generates a detailed report of all free memory regions, categorized by size bins.
-	 * @param gpu_allocator A pointer to the GPU allocator.
-	 * @return A `zloc_gpu_storage_report_full_t` struct containing a list of free region sizes and their counts.
-	 */
-	ZLOC_API zloc_gpu_storage_report_full_t zloc_GPUStorageReportFull(zloc_gpu_allocator_t *gpu_allocator);
+	/*
+		Allocate some memory in a remote location from the normal heap. This is generally for allocating GPU memory.
 
-	/**
-	 * Creates and initializes a GPU allocator within a provided memory block.
-	 * @param memory A pointer to a pre-allocated block of memory to be used for the allocator.
-	 * @param size The total size of the memory pool to be managed by this allocator.
-	 * @param max_allocations The maximum number of individual allocations the allocator can track.
-	 * @return A pointer to the newly created `zloc_gpu_allocator_t`.
-	 */
-	ZLOC_API zloc_gpu_allocator_t *zloc_CreateGPUAllocator(void *memory, zloc_uint size, zloc_uint max_allocations);
+		@param	zloc_allocator			A pointer to an initialised zloc_allocator
+		@param	zloc_size				The size of the memory you're passing which should be the size of the block with the information about the
+										buffer you're creating in the remote location
+		@param	zloc_size				The remote size of the memory you're passing
+		@returns void*					A pointer to the block of memory that is allocated. Returns 0 if it was unable to allocate the memory due to
+										no free memory. If that happens then you may want to add a pool at that point.
+	*/
+	ZLOC_API void *zloc_AllocateRemote(zloc_allocator *allocator, zloc_size remote_size);
 
-	/**
-	 * Allocates a block of memory from the GPU allocator.
-	 * @param gpu_allocator A pointer to the GPU allocator.
-	 * @param size The size of the memory block to allocate in bytes.
-	 * @return A `zloc_gpu_allocation_t` handle. If allocation fails, the `offset` field will be `zloc__NO_SPACE`.
-	 */
-	ZLOC_API zloc_gpu_allocation_t zloc_GPUAllocate(zloc_gpu_allocator_t *gpu_allocator, zloc_uint size);
+	/*
+		Get the size of a block plus the block extension size so that you can use this to create an allocator pool to store all the blocks that will
+		track the remote memory. Be sure that you have already called and set the block extension size with zloc_SetBlockExtensionSize.
 
-	/**
-	 * Frees a previously allocated block of memory in the GPU allocator.
-	 * @param gpu_allocator A pointer to the GPU allocator.
-	 * @param allocation The allocation handle to be freed.
-	 */
-	ZLOC_API void zloc_GPUFree(zloc_gpu_allocator_t *gpu_allocator, zloc_gpu_allocation_t allocation);
+		@param	zloc_allocator			A pointer to an initialised zloc_allocator
+		@returns zloc_size				The size of the block
+	*/
+	ZLOC_API zloc_size zloc_CalculateRemoteBlockPoolSize(zloc_allocator *allocator, zloc_size remote_pool_size);
 
-/*
-	-- end of offset allocator API functions
-*/
+	ZLOC_API void zloc_AddRemotePool(zloc_allocator *allocator, void *block_memory, zloc_size block_memory_size, zloc_size remote_pool_size);
+
+	ZLOC_API void *zloc_BlockUserExtensionPtr(const zloc_header *block);
+
+	ZLOC_API void *zloc_AllocationFromExtensionPtr(const void *block);
 
 	//Very simple linear allocator.
 	typedef struct zloc_linear_allocator_t {
@@ -531,6 +494,8 @@ typedef struct zloc_gpu_allocator_t {
 	*/
 	void zloc_ResetToMarker(zloc_linear_allocator_t *allocator, zloc_size marker);
 
+#endif
+
 	//--End of user functions
 
 	//Private inline functions, user doesn't need to call these
@@ -545,6 +510,17 @@ typedef struct zloc_gpu_allocator_t {
 		size = size & ~(1 << *fli);
 		*sli = (zloc_index)(size >> (*fli - zloc__SECOND_LEVEL_INDEX_LOG2)) % zloc__SECOND_LEVEL_INDEX_COUNT;
 	}
+
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+	static inline void zloc__null_merge_callback(void *user_data, zloc_header *block1, zloc_header *block2) { return; }
+	void zloc__remote_merge_next_callback(void *user_data, zloc_header *block1, zloc_header *block2);
+	void zloc__remote_merge_prev_callback(void *user_data, zloc_header *block1, zloc_header *block2);
+	zloc_size zloc__get_remote_size(const zloc_header *block1);
+	static inline void zloc__null_split_callback(void *user_data, zloc_header *block, zloc_header *trimmed, zloc_size remote_size) { return; }
+	static inline void zloc__null_add_pool_callback(void *user_data, void *block) { return; }
+	static inline void zloc__null_unable_to_reallocate_callback(void *user_data, zloc_header *block, zloc_header *new_block) { return; }
+	static inline void zloc__unset_remote_block_limit_reached(zloc_allocator *allocator) { allocator->block_extension_size &= ~1; };
+#endif
 
 	//Debug tool to make sure that if a first level bitmap has a bit set, then the corresponding second level index should contain a value
 	static inline void zloc__verify_lists(zloc_allocator *allocator) {
@@ -574,10 +550,10 @@ typedef struct zloc_gpu_allocator_t {
 		return block->size & zloc__PREV_BLOCK_IS_FREE;
 	}
 
-	static inline void* zloc__align_ptr(const void* ptr, zloc_size align) {
+	static inline void *zloc__align_ptr(const void *ptr, zloc_size align) {
 		ptrdiff_t aligned = (((ptrdiff_t)ptr) + (align - 1)) & ~(align - 1);
 		ZLOC_ASSERT(0 == (align & (align - 1)) && "must align to a power of two");
-		return (void*)aligned;
+		return (void *)aligned;
 	}
 
 	static inline zloc_bool zloc__is_aligned(zloc_size size, zloc_size alignment) {
@@ -610,23 +586,23 @@ typedef struct zloc_gpu_allocator_t {
 	}
 
 	static inline zloc_header *zloc__block_from_allocation(const void *allocation) {
-		return (zloc_header*)((char*)allocation - zloc__BLOCK_POINTER_OFFSET);
+		return (zloc_header *)((char *)allocation - zloc__BLOCK_POINTER_OFFSET);
 	}
 
 	static inline zloc_header *zloc__null_block(zloc_allocator *allocator) {
 		return &allocator->null_block;
 	}
 
-	static inline void* zloc__block_user_ptr(const zloc_header *block) {
-		return (char*)block + zloc__BLOCK_POINTER_OFFSET;
+	static inline void *zloc__block_user_ptr(const zloc_header *block) {
+		return (char *)block + zloc__BLOCK_POINTER_OFFSET;
 	}
 
-	static inline zloc_header* zloc__first_block_in_pool(const zloc_pool *pool) {
-		return (zloc_header*)((char*)pool - zloc__POINTER_SIZE);
+	static inline zloc_header *zloc__first_block_in_pool(const zloc_pool *pool) {
+		return (zloc_header *)((char *)pool - zloc__POINTER_SIZE);
 	}
 
 	static inline zloc_header *zloc__next_physical_block(const zloc_header *block) {
-		return (zloc_header*)((char*)zloc__block_user_ptr(block) + zloc__block_size(block));
+		return (zloc_header *)((char *)zloc__block_user_ptr(block) + zloc__block_size(block));
 	}
 
 	static inline zloc_bool zloc__next_block_is_free(const zloc_header *block) {
@@ -634,7 +610,7 @@ typedef struct zloc_gpu_allocator_t {
 	}
 
 	static inline zloc_header *zloc__allocator_first_block(zloc_allocator *allocator) {
-		return (zloc_header*)((char*)allocator + zloc_AllocatorSize() - zloc__POINTER_SIZE);
+		return (zloc_header *)((char *)allocator + zloc_AllocatorSize() - zloc__POINTER_SIZE);
 	}
 
 	static inline zloc_bool zloc__is_last_block_in_pool(const zloc_header *block) {
@@ -764,8 +740,8 @@ typedef struct zloc_gpu_allocator_t {
 			if (allocator->second_level_bitmaps[fli] == 0) {
 				//And if the second level bitmap is 0 then the corresponding bit in the first lebel can be zero'd too.
 				allocator->first_level_bitmap &= ~(ZLOC_ONE << fli);
+			}
 		}
-	}
 		if (allocator->first_level_bitmap & (ZLOC_ONE << fli)) {
 			ZLOC_ASSERT(allocator->second_level_bitmaps[fli] > 0);
 		}
@@ -820,7 +796,7 @@ typedef struct zloc_gpu_allocator_t {
 		if (size_plus_overhead + zloc__MINIMUM_BLOCK_SIZE >= zloc__block_size(block) - zloc__block_extension_size) {
 			return block;
 		}
-		zloc_header *trimmed = (zloc_header*)((char*)zloc__block_user_ptr(block) + size + zloc__block_extension_size);
+		zloc_header *trimmed = (zloc_header *)((char *)zloc__block_user_ptr(block) + size + zloc__block_extension_size);
 		trimmed->size = 0;
 		zloc__set_block_size(trimmed, zloc__block_size(block) - size_plus_overhead);
 		zloc_header *next_block = zloc__next_physical_block(block);
@@ -836,7 +812,7 @@ typedef struct zloc_gpu_allocator_t {
 	static inline zloc_header *zloc__split_aligned_block(zloc_allocator *allocator, zloc_header *block, zloc_size size) {
 		ZLOC_ASSERT(!zloc__is_last_block_in_pool(block));
 		zloc_size size_minus_overhead = size - zloc__BLOCK_POINTER_OFFSET;
-		zloc_header *trimmed = (zloc_header*)((char*)zloc__block_user_ptr(block) + size_minus_overhead);
+		zloc_header *trimmed = (zloc_header *)((char *)zloc__block_user_ptr(block) + size_minus_overhead);
 		trimmed->size = 0;
 		zloc__set_block_size(trimmed, zloc__block_size(block) - size);
 		zloc_header *next_block = zloc__next_physical_block(block);
@@ -913,198 +889,6 @@ typedef struct zloc_gpu_allocator_t {
 
 		return 0;
 	}
-
-	/*
-	Offset allocator Internal functions
-	*/
-
-	// Bin sizes follow floating point (exponent + mantissa) distribution (piecewise linear log approx)
-	// This ensures that for each size class, the average overhead percentage stays the same
-	static inline zloc_uint zloc__uint_to_float_round_up(zloc_uint size)
-	{
-		zloc_uint exp = 0;
-		zloc_uint mantissa = 0;
-
-		if (size < zloc__MANTISSA_VALUE)
-		{
-			// Denorm: 0..(zloc__MANTISSA_VALUE-1)
-			mantissa = size;
-		} else
-		{
-			// Normalized: Hidden high bit always 1. Not stored. Just like float.
-			zloc_uint leadingZeros = zloc__scan_reverse(size);
-			zloc_uint highestSetBit = leadingZeros;
-
-			zloc_uint mantissaStartBit = highestSetBit - zloc__MANTISSA_BITS;
-			exp = mantissaStartBit + 1;
-			mantissa = (size >> mantissaStartBit) & zloc__MANTISSA_MASK;
-
-			zloc_uint lowBitsMask = (1 << mantissaStartBit) - 1;
-
-			// Round up!
-			if ((size & lowBitsMask) != 0)
-				mantissa++;
-		}
-
-		return (exp << zloc__MANTISSA_BITS) + mantissa; // + allows mantissa->exp overflow for round up
-	}
-
-	static inline zloc_uint zloc__uint_to_float_round_down(zloc_uint size)
-	{
-		zloc_uint exp = 0;
-		zloc_uint mantissa = 0;
-
-		if (size < zloc__MANTISSA_VALUE)
-		{
-			// Denorm: 0..(zloc__MANTISSA_VALUE-1)
-			mantissa = size;
-		} else
-		{
-			// Normalized: Hidden high bit always 1. Not stored. Just like float.
-			zloc_uint leadingZeros = zloc__scan_reverse(size);
-			zloc_uint highestSetBit = leadingZeros;
-
-			zloc_uint mantissaStartBit = highestSetBit - zloc__MANTISSA_BITS;
-			exp = mantissaStartBit + 1;
-			mantissa = (size >> mantissaStartBit) & zloc__MANTISSA_MASK;
-		}
-
-		return (exp << zloc__MANTISSA_BITS) | mantissa;
-	}
-
-	static inline zloc_uint zloc__float_to_uint(zloc_uint floatValue)
-	{
-		zloc_uint exponent = floatValue >> zloc__MANTISSA_BITS;
-		zloc_uint mantissa = floatValue & zloc__MANTISSA_MASK;
-		if (exponent == 0)
-		{
-			// Denorms
-			return mantissa;
-		} else
-		{
-			return (mantissa | zloc__MANTISSA_VALUE) << (exponent - 1);
-		}
-	}
-
-	// Utility functions
-	static inline zloc_uint zloc__find_lowest_set_bit_after(zloc_uint bitMask, zloc_uint startBitIndex)
-	{
-		zloc_uint maskBeforeStartIndex = (1 << startBitIndex) - 1;
-		zloc_uint maskAfterStartIndex = ~maskBeforeStartIndex;
-		zloc_uint bitsAfter = bitMask & maskAfterStartIndex;
-		if (bitsAfter == 0) return zloc__NO_SPACE;
-		return zloc__scan_forward(bitsAfter);
-	}
-
-	static inline zloc_uint zloc__insert_node_into_bin(zloc_gpu_allocator_t *gpu_allocator, zloc_uint size, zloc_uint dataOffset)
-	{
-		// Round down to bin index to ensure that bin >= alloc
-		zloc_uint binIndex = zloc__uint_to_float_round_down(size);
-
-		zloc_uint topBinIndex = binIndex >> zloc__TOP_BINS_INDEX_SHIFT;
-		zloc_uint leafBinIndex = binIndex & zloc__LEAF_BINS_INDEX_MASK;
-
-		// Bin was empty before?
-		if (gpu_allocator->m_binIndices[binIndex] == zloc__UNUSED)
-		{
-			// Set bin mask bits
-			gpu_allocator->m_usedBins[topBinIndex] |= 1 << leafBinIndex;
-			gpu_allocator->m_usedBinsTop |= 1 << topBinIndex;
-		}
-
-		// Take a freelist node and insert on top of the bin linked list (next = old top)
-		zloc_uint topNodeIndex = gpu_allocator->m_binIndices[binIndex];
-		zloc_uint nodeIndex = gpu_allocator->m_freeNodes[gpu_allocator->m_freeOffset--];
-		gpu_allocator->m_nodes[nodeIndex] = (zloc_gpu_node_t){
-			.dataOffset = dataOffset,
-			.dataSize = size,
-			.binListPrev = zloc__UNUSED,
-			.binListNext = topNodeIndex,
-			.neighbourPrev = zloc__UNUSED,
-			.neighbourNext = zloc__UNUSED,
-			.used = 0
-		};
-		if (topNodeIndex != zloc__UNUSED) gpu_allocator->m_nodes[topNodeIndex].binListPrev = nodeIndex;
-		gpu_allocator->m_binIndices[binIndex] = nodeIndex;
-
-		gpu_allocator->m_freeStorage += size;
-
-		return nodeIndex;
-	}
-
-	static inline void zloc__gpu_allocator_reset(zloc_gpu_allocator_t *gpu_allocator)
-	{
-		gpu_allocator->m_freeStorage = 0;
-		gpu_allocator->m_usedBinsTop = 0;
-		gpu_allocator->m_freeOffset = gpu_allocator->m_maxAllocs;
-
-		for (zloc_uint i = 0; i < zloc__NUM_TOP_BINS; i++)
-			gpu_allocator->m_usedBins[i] = 0;
-
-		for (zloc_uint i = 0; i < zloc__NUM_LEAF_BINS; i++)
-			gpu_allocator->m_binIndices[i] = zloc__UNUSED;
-
-		zloc_size node_memory_size = sizeof(zloc_gpu_node_t) * (gpu_allocator->m_maxAllocs + 1);
-		memset(gpu_allocator->m_nodes, 0, node_memory_size);
-
-		// Freelist is a stack. Nodes in inverse order so that [0] pops first.
-		for (zloc_uint i = 0; i < gpu_allocator->m_maxAllocs + 1; i++)
-		{
-			gpu_allocator->m_freeNodes[i] = gpu_allocator->m_maxAllocs - i;
-		}
-
-		// Start state: Whole storage as one big node
-		// Algorithm will split remainders and push them back as smaller nodes
-		zloc__insert_node_into_bin(gpu_allocator, gpu_allocator->m_size, 0);
-	}
-
-	static inline void zloc__remove_node_from_bin(zloc_gpu_allocator_t *gpu_allocator, zloc_uint nodeIndex)
-	{
-		zloc_gpu_node_t *node = &gpu_allocator->m_nodes[nodeIndex];
-
-		if (node->binListPrev != zloc__UNUSED)
-		{
-			// Easy case: We have previous node. Just remove this node from the middle of the list.
-			gpu_allocator->m_nodes[node->binListPrev].binListNext = node->binListNext;
-			if (node->binListNext != zloc__UNUSED) gpu_allocator->m_nodes[node->binListNext].binListPrev = node->binListPrev;
-		} else
-		{
-			// Hard case: We are the first node in a bin. Find the bin.
-
-			// Round down to bin index to ensure that bin >= alloc
-			zloc_uint binIndex = zloc__uint_to_float_round_down(node->dataSize);
-
-			zloc_uint topBinIndex = binIndex >> zloc__TOP_BINS_INDEX_SHIFT;
-			zloc_uint leafBinIndex = binIndex & zloc__LEAF_BINS_INDEX_MASK;
-
-			gpu_allocator->m_binIndices[binIndex] = node->binListNext;
-			if (node->binListNext != zloc__UNUSED) gpu_allocator->m_nodes[node->binListNext].binListPrev = zloc__UNUSED;
-
-			// Bin empty?
-			if (gpu_allocator->m_binIndices[binIndex] == zloc__UNUSED)
-			{
-				// Remove a leaf bin mask bit
-				gpu_allocator->m_usedBins[topBinIndex] &= ~(1 << leafBinIndex);
-
-				// All leaf bins empty?
-				if (gpu_allocator->m_usedBins[topBinIndex] == 0)
-				{
-					// Remove a top bin mask bit
-					gpu_allocator->m_usedBinsTop &= ~(1 << topBinIndex);
-				}
-			}
-		}
-
-		// Insert the node to freelist
-		gpu_allocator->m_freeNodes[++gpu_allocator->m_freeOffset] = nodeIndex;
-
-		gpu_allocator->m_freeStorage -= node->dataSize;
-	}
-
-	/*
-		-- end of offset allocator internal functions
-	*/
-
 	//--End of internal functions
 
 	//--End of header declarations
@@ -1124,12 +908,12 @@ typedef struct zloc_gpu_allocator_t {
 #include <string.h>
 
 //Definitions
-ZLOC_API void* zloc_BlockUserExtensionPtr(const zloc_header *block) {
-	return (char*)block + sizeof(zloc_header);
+ZLOC_API void *zloc_BlockUserExtensionPtr(const zloc_header *block) {
+	return (char *)block + sizeof(zloc_header);
 }
 
-ZLOC_API void* zloc_AllocationFromExtensionPtr(const void *block) {
-	return (void*)((char*)block - zloc__MINIMUM_BLOCK_SIZE);
+ZLOC_API void *zloc_AllocationFromExtensionPtr(const void *block) {
+	return (void *)((char *)block - zloc__MINIMUM_BLOCK_SIZE);
 }
 
 zloc_allocator *zloc_InitialiseAllocator(void *memory) {
@@ -1138,7 +922,7 @@ zloc_allocator *zloc_InitialiseAllocator(void *memory) {
 		return 0;
 	}
 
-	zloc_allocator *allocator = (zloc_allocator*)memory;
+	zloc_allocator *allocator = (zloc_allocator *)memory;
 	memset(allocator, 0, sizeof(zloc_allocator));
 	allocator->null_block.next_free_block = &allocator->null_block;
 	allocator->null_block.prev_free_block = &allocator->null_block;
@@ -1150,6 +934,15 @@ zloc_allocator *zloc_InitialiseAllocator(void *memory) {
 			allocator->segregated_lists[i][j] = &allocator->null_block;
 		}
 	}
+
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+	allocator->get_block_size_callback = zloc__block_size;
+	allocator->merge_next_callback = zloc__null_merge_callback;
+	allocator->merge_prev_callback = zloc__null_merge_callback;
+	allocator->split_block_callback = zloc__null_split_callback;
+	allocator->add_pool_callback = zloc__null_add_pool_callback;
+	allocator->unable_to_reallocate_callback = zloc__null_unable_to_reallocate_callback;
+#endif
 
 	return allocator;
 }
@@ -1180,7 +973,7 @@ void zloc_SetMinimumAllocationSize(zloc_allocator *allocator, zloc_size size) {
 }
 
 zloc_pool *zloc_GetPool(zloc_allocator *allocator) {
-	return (void*)((char*)allocator + zloc_AllocatorSize());
+	return (void *)((char *)allocator + zloc_AllocatorSize());
 }
 
 zloc_pool *zloc_AddPool(zloc_allocator *allocator, void *memory, zloc_size size) {
@@ -1229,218 +1022,12 @@ zloc_bool zloc_RemovePool(zloc_allocator *allocator, zloc_pool *pool) {
 	return 0;
 }
 
-zloc_size zloc_CalculateGPUAllocatorSize(zloc_uint max_allocations) {
-	zloc_size node_memory_size = sizeof(zloc_gpu_node_t) * (max_allocations + 1);
-	zloc_size free_node_memory_size = sizeof(zloc_gpu_node_index) * (max_allocations + 1);
-	return sizeof(zloc_gpu_allocator_t) + node_memory_size + free_node_memory_size;
-}
-
-zloc_gpu_allocator_t *zloc_CreateGPUAllocator(void *memory, zloc_uint size, zloc_uint max_allocations) {
-	zloc_gpu_allocator_t *gpu_allocator = (zloc_gpu_allocator_t *)memory;
-	*gpu_allocator = (zloc_gpu_allocator_t){ 0 };
-	gpu_allocator->m_size = size;
-	gpu_allocator->m_maxAllocs = max_allocations;
-	if (sizeof(zloc_gpu_node_index) == 2)
-	{
-		ZLOC_ASSERT(max_allocations <= 65536);
-	}
-	zloc_size node_memory_size = sizeof(zloc_gpu_node_t) * (gpu_allocator->m_maxAllocs + 1);
-	char *mem_offset = (char *)memory + sizeof(zloc_gpu_allocator_t);
-	gpu_allocator->m_nodes = (zloc_gpu_node_t *)mem_offset;
-	mem_offset += node_memory_size;
-	gpu_allocator->m_freeNodes = (zloc_gpu_node_index *)mem_offset;
-	zloc__gpu_allocator_reset(gpu_allocator);
-	return gpu_allocator;
-}
-
-zloc_gpu_allocation_t zloc_GPUAllocate(zloc_gpu_allocator_t *gpu_allocator, zloc_uint size) {
-	// Out of allocations?
-	if (gpu_allocator->m_freeOffset == zloc__NO_SPACE)
-	{
-		return (zloc_gpu_allocation_t) { .offset = zloc__NO_SPACE, .metadata = zloc__NO_SPACE };
-	}
-
-	// Round up to bin index to ensure that alloc >= bin
-	// Gives us min bin index that fits the size
-	zloc_uint minBinIndex = zloc__uint_to_float_round_up(size);
-
-	zloc_uint minTopBinIndex = minBinIndex >> zloc__TOP_BINS_INDEX_SHIFT;
-	zloc_uint minLeafBinIndex = minBinIndex & zloc__LEAF_BINS_INDEX_MASK;
-
-	zloc_uint topBinIndex = minTopBinIndex;
-	zloc_uint leafBinIndex = zloc__NO_SPACE;
-
-	// If top bin exists, scan its leaf bin. This can fail (NO_SPACE).
-	if (gpu_allocator->m_usedBinsTop & (1 << topBinIndex))
-	{
-		leafBinIndex = zloc__find_lowest_set_bit_after(gpu_allocator->m_usedBins[topBinIndex], minLeafBinIndex);
-	}
-
-	// If we didn't find space in top bin, we search top bin from +1
-	if (leafBinIndex == zloc__NO_SPACE)
-	{
-		topBinIndex = zloc__find_lowest_set_bit_after(gpu_allocator->m_usedBinsTop, minTopBinIndex + 1);
-
-		// Out of space?
-		if (topBinIndex == zloc__NO_SPACE)
-		{
-			return (zloc_gpu_allocation_t) { .offset = zloc__NO_SPACE, .metadata = zloc__NO_SPACE };
-		}
-
-		// All leaf bins here fit the alloc, since the top bin was rounded up. Start leaf search from bit 0.
-		// NOTE: This search can't fail since at least one leaf bit was set because the top bit was set.
-		leafBinIndex = zloc__scan_forward(gpu_allocator->m_usedBins[topBinIndex]);
-	}
-
-	zloc_uint binIndex = (topBinIndex << zloc__TOP_BINS_INDEX_SHIFT) | leafBinIndex;
-
-	// Pop the top node of the bin. Bin top = node.next.
-	zloc_uint nodeIndex = gpu_allocator->m_binIndices[binIndex];
-	ZLOC_ASSERT(nodeIndex < gpu_allocator->m_maxAllocs);
-	zloc_gpu_node_t *node = &gpu_allocator->m_nodes[nodeIndex];
-	zloc_uint nodeTotalSize = node->dataSize;
-	node->dataSize = size;
-	node->used = 1;
-	gpu_allocator->m_binIndices[binIndex] = node->binListNext;
-	if (node->binListNext != zloc__UNUSED) gpu_allocator->m_nodes[node->binListNext].binListPrev = zloc__UNUSED;
-	gpu_allocator->m_freeStorage -= nodeTotalSize;
-
-	// Bin empty?
-	if (gpu_allocator->m_binIndices[binIndex] == zloc__UNUSED)
-	{
-		// Remove a leaf bin mask bit
-		gpu_allocator->m_usedBins[topBinIndex] &= ~(1 << leafBinIndex);
-
-		// All leaf bins empty?
-		if (gpu_allocator->m_usedBins[topBinIndex] == 0)
-		{
-			// Remove a top bin mask bit
-			gpu_allocator->m_usedBinsTop &= ~(1 << topBinIndex);
-		}
-	}
-
-	// Push back reminder N elements to a lower bin
-	zloc_uint reminderSize = nodeTotalSize - size;
-	if (reminderSize > 0)
-	{
-		zloc_uint newNodeIndex = zloc__insert_node_into_bin(gpu_allocator, reminderSize, node->dataOffset + size);
-
-		// Link nodes next to each other so that we can merge them later if both are free
-		// And update the old next neighbor to point to the new node (in middle)
-		if (node->neighbourNext != zloc__UNUSED) gpu_allocator->m_nodes[node->neighbourNext].neighbourPrev = newNodeIndex;
-		gpu_allocator->m_nodes[newNodeIndex].neighbourPrev = nodeIndex;
-		gpu_allocator->m_nodes[newNodeIndex].neighbourNext = node->neighbourNext;
-		node->neighbourNext = newNodeIndex;
-	}
-
-	return (zloc_gpu_allocation_t) { .offset = node->dataOffset, .metadata = nodeIndex };
-}
-
-void zloc_GPUFree(zloc_gpu_allocator_t *gpu_allocator, zloc_gpu_allocation_t allocation) {
-	ZLOC_ASSERT(allocation.metadata != zloc__NO_SPACE);
-	if (!gpu_allocator->m_nodes) return;
-
-	zloc_uint nodeIndex = allocation.metadata;
-	zloc_gpu_node_t *node = &gpu_allocator->m_nodes[nodeIndex];
-
-	// Double delete check
-	ZLOC_ASSERT(node->used);
-
-	// Merge with neighbors...
-	zloc_uint offset = node->dataOffset;
-	zloc_uint size = node->dataSize;
-
-	if ((node->neighbourPrev != zloc__UNUSED) && (gpu_allocator->m_nodes[node->neighbourPrev].used == 0))
-	{
-		// Previous (contiguous) free node-> Sum sizes
-		zloc_gpu_node_t *prevNode = &gpu_allocator->m_nodes[node->neighbourPrev];
-		offset = prevNode->dataOffset;
-		size += prevNode->dataSize;
-
-		// Remove node from the bin linked list and put it in the freelist
-		zloc__remove_node_from_bin(gpu_allocator, node->neighbourPrev);
-
-		ZLOC_ASSERT(prevNode->neighbourNext == nodeIndex);
-		node->neighbourPrev = prevNode->neighbourPrev;
-	}
-
-	if ((node->neighbourNext != zloc__UNUSED) && (gpu_allocator->m_nodes[node->neighbourNext].used == 0))
-	{
-		// Next (contiguous) free node-> Sum sizes.
-		zloc_gpu_node_t *nextNode = &gpu_allocator->m_nodes[node->neighbourNext];
-		size += nextNode->dataSize;
-
-		// Remove node from the bin linked list and put it in the freelist
-		zloc__remove_node_from_bin(gpu_allocator, node->neighbourNext);
-
-		ZLOC_ASSERT(nextNode->neighbourPrev == nodeIndex);
-		node->neighbourNext = nextNode->neighbourNext;
-	}
-
-	zloc_uint neighbourNext = node->neighbourNext;
-	zloc_uint neighbourPrev = node->neighbourPrev;
-
-	// Insert the removed node to freelist
-	gpu_allocator->m_freeNodes[++gpu_allocator->m_freeOffset] = nodeIndex;
-
-	// Insert the (combined) free node to bin
-	zloc_uint combinedNodeIndex = zloc__insert_node_into_bin(gpu_allocator, size, offset);
-
-	// Connect neighbors with the new combined node
-	if (neighbourNext != zloc__UNUSED)
-	{
-		gpu_allocator->m_nodes[combinedNodeIndex].neighbourNext = neighbourNext;
-		gpu_allocator->m_nodes[neighbourNext].neighbourPrev = combinedNodeIndex;
-	}
-	if (neighbourPrev != zloc__UNUSED)
-	{
-		gpu_allocator->m_nodes[combinedNodeIndex].neighbourPrev = neighbourPrev;
-		gpu_allocator->m_nodes[neighbourPrev].neighbourNext = combinedNodeIndex;
-	}
-}
-
-zloc_gpu_storage_report_t zloc_GPUStorageReport(zloc_gpu_allocator_t *gpu_allocator) {
-	zloc_uint largestFreeRegion = 0;
-	zloc_uint freeStorage = 0;
-
-	// Out of allocations? -> Zero free space
-	if (gpu_allocator->m_freeOffset > 0)
-	{
-		freeStorage = gpu_allocator->m_freeStorage;
-		if (gpu_allocator->m_usedBinsTop)
-		{
-			zloc_uint topBinIndex = zloc__scan_reverse(gpu_allocator->m_usedBinsTop);
-			zloc_uint leafBinIndex = zloc__scan_reverse(gpu_allocator->m_usedBins[topBinIndex]);
-			largestFreeRegion = zloc__float_to_uint((topBinIndex << zloc__TOP_BINS_INDEX_SHIFT) | leafBinIndex);
-			ZLOC_ASSERT(freeStorage >= largestFreeRegion);
-		}
-	}
-
-	return (zloc_gpu_storage_report_t) { .totalFreeSpace = freeStorage, .largestFreeRegion = largestFreeRegion };
-}
-
-zloc_gpu_storage_report_full_t zloc_GPUStorageReportFull(zloc_gpu_allocator_t *gpu_allocator) {
-	zloc_gpu_storage_report_full_t report;
-	for (zloc_uint i = 0; i < zloc__NUM_LEAF_BINS; i++) {
-		zloc_uint count = 0;
-		zloc_uint nodeIndex = gpu_allocator->m_binIndices[i];
-		while (nodeIndex != zloc__UNUSED) {
-			nodeIndex = gpu_allocator->m_nodes[nodeIndex].binListNext;
-			count++;
-		}
-		report.freeRegions[i] = (zloc_gpu_region_t){ .size = zloc__float_to_uint(i), .count = count };
-	}
-	return report;
-}
-
-zloc_uint zloc_GPUAllocationSize(zloc_gpu_allocator_t *gpu_allocator, zloc_gpu_allocation_t allocation) {
-	if (allocation.metadata == zloc__NO_SPACE) return 0;
-	if (!gpu_allocator->m_nodes) return 0;
-	return gpu_allocator->m_nodes[allocation.metadata].dataSize;
-}
-
-void *zloc_Allocate(zloc_allocator *allocator, zloc_size size) {
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+void *zloc__allocate(zloc_allocator *allocator, zloc_size size, zloc_size remote_size) {
+#else
+void *zloc_Allocate(zloc_allocator * allocator, zloc_size size) {
 	zloc_size remote_size = 0;
+#endif
 	zloc__lock_thread_access;
 	size = zloc__adjust_size(size, zloc__MINIMUM_BLOCK_SIZE, zloc__MEMORY_ALIGNMENT);
 	zloc_header *block = zloc__find_free_block(allocator, size, remote_size);
@@ -1456,7 +1043,7 @@ void *zloc_Allocate(zloc_allocator *allocator, zloc_size size) {
 	return 0;
 }
 
-void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
+void *zloc_Reallocate(zloc_allocator * allocator, void *ptr, zloc_size size) {
 	zloc__lock_thread_access;
 
 	if (ptr && size == 0) {
@@ -1505,7 +1092,7 @@ void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
 	return allocation;
 }
 
-void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size alignment) {
+void *zloc_AllocateAligned(zloc_allocator * allocator, zloc_size size, zloc_size alignment) {
 	zloc__lock_thread_access;
 	zloc_size adjusted_size = zloc__adjust_size(size, allocator->minimum_allocation_size, alignment);
 	zloc_size gap_minimum = sizeof(zloc_header);
@@ -1524,7 +1111,7 @@ void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size 
 		{
 			zloc_size gap_remain = gap_minimum - gap;
 			zloc_size offset = zloc__Max(gap_remain, alignment);
-			const void* next_aligned = (void*)((ptrdiff_t)aligned_ptr + offset);
+			const void *next_aligned = (void *)((ptrdiff_t)aligned_ptr + offset);
 
 			aligned_ptr = zloc__align_ptr(next_aligned, alignment);
 			gap = (zloc_size)((ptrdiff_t)aligned_ptr - (ptrdiff_t)user_ptr);
@@ -1546,7 +1133,7 @@ void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size 
 	return zloc__block_user_ptr(block);
 }
 
-int zloc_Free(zloc_allocator *allocator, void* allocation) {
+int zloc_Free(zloc_allocator * allocator, void *allocation) {
 	if (!allocation) return 0;
 	zloc__lock_thread_access;
 	zloc_header *block = zloc__block_from_allocation(allocation);
@@ -1590,18 +1177,16 @@ int zloc_SafeCopyBlock(void *dst_block_start, void *dst, void *src, zloc_size si
 	return 1;
 }
 
-zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header *first_block) {
+zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header * first_block) {
 	zloc_pool_stats_t stats = { 0 };
 	zloc_header *current_block = first_block;
 	while (!zloc__is_last_block_in_pool(current_block)) {
 		if (zloc__is_free_block(current_block)) {
 			stats.free_blocks++;
 			stats.free_size += zloc__block_size(current_block);
-			stats.largest_free_block = zloc__Max(zloc__block_size(current_block), stats.largest_free_block);
 		} else {
 			stats.used_blocks++;
 			stats.used_size += zloc__block_size(current_block);
-			stats.largest_used_block = zloc__Max(zloc__block_size(current_block), stats.largest_used_block);
 		}
 		current_block = zloc__next_physical_block(current_block);
 	}
@@ -1613,6 +1198,145 @@ zloc_pool_stats_t zloc_CreateMemorySnapshot(zloc_header *first_block) {
 		stats.used_size += zloc__block_size(current_block);
 	}
 	return stats;
+}
+
+#if defined(ZLOC_ENABLE_REMOTE_MEMORY)
+/*
+	Standard callbacks, you can copy paste these to replace with your own as needed to add any extra functionality
+	that you might need
+*/
+void zloc__remote_merge_next_callback(void *user_data, zloc_header * block, zloc_header * next_block) {
+	zloc_remote_header *remote_block = (zloc_remote_header *)zloc_BlockUserExtensionPtr(block);
+	zloc_remote_header *next_remote_block = (zloc_remote_header *)zloc_BlockUserExtensionPtr(next_block);
+	remote_block->size += next_remote_block->size;
+	next_remote_block->memory_offset = 0;
+	next_remote_block->size = 0;
+}
+
+void zloc__remote_merge_prev_callback(void *user_data, zloc_header * prev_block, zloc_header * block) {
+	zloc_remote_header *remote_block = (zloc_remote_header *)zloc_BlockUserExtensionPtr(block);
+	zloc_remote_header *prev_remote_block = (zloc_remote_header *)zloc_BlockUserExtensionPtr(prev_block);
+	prev_remote_block->size += remote_block->size;
+	remote_block->memory_offset = 0;
+	remote_block->size = 0;
+}
+
+zloc_size zloc__get_remote_size(const zloc_header * block) {
+	zloc_remote_header *remote_block = (zloc_remote_header *)zloc_BlockUserExtensionPtr(block);
+	return remote_block->size;
+}
+
+void *zloc_Allocate(zloc_allocator * allocator, zloc_size size) {
+	return zloc__allocate(allocator, size, 0);
+}
+
+void zloc_SetBlockExtensionSize(zloc_allocator * allocator, zloc_size size) {
+	ZLOC_ASSERT(allocator->block_extension_size == 0);	//You cannot change this once set
+	allocator->block_extension_size = zloc__align_size_up(size, zloc__MEMORY_ALIGNMENT);
+}
+
+zloc_size zloc_CalculateRemoteBlockPoolSize(zloc_allocator * allocator, zloc_size remote_pool_size) {
+	ZLOC_ASSERT(allocator->block_extension_size);	//You must set the block extension size first
+	ZLOC_ASSERT(allocator->minimum_allocation_size);		//You must set the number of bytes per block
+	return (sizeof(zloc_header) + allocator->block_extension_size) * (remote_pool_size / allocator->minimum_allocation_size) + zloc__BLOCK_POINTER_OFFSET;
+}
+
+void zloc_AddRemotePool(zloc_allocator * allocator, void *block_memory, zloc_size block_memory_size, zloc_size remote_pool_size) {
+	ZLOC_ASSERT(allocator->add_pool_callback);	//You must set all the necessary callbacks to handle remote memory management
+	ZLOC_ASSERT(allocator->get_block_size_callback);
+	ZLOC_ASSERT(allocator->merge_next_callback);
+	ZLOC_ASSERT(allocator->merge_prev_callback);
+	ZLOC_ASSERT(allocator->split_block_callback);
+	ZLOC_ASSERT(allocator->get_block_size_callback != zloc__block_size);	//Make sure you initialise the remote allocator with zloc_InitialiseAllocatorForRemote
+
+	void *block = zloc_BlockUserExtensionPtr(zloc__first_block_in_pool(block_memory));
+	zloc__do_add_pool_callback;
+	zloc_AddPool(allocator, block_memory, block_memory_size);
+}
+
+zloc_allocator *zloc_InitialiseAllocatorForRemote(void *memory) {
+	if (!memory) {
+		ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: The memory pointer passed in to the initialiser was NULL, did it allocate properly?\n", ZLOC_ERROR_NAME);
+		return 0;
+	}
+
+	zloc_allocator *allocator = zloc_InitialiseAllocator(memory);
+	if (!allocator) {
+		return 0;
+	}
+
+	allocator->get_block_size_callback = zloc__get_remote_size;
+	allocator->merge_next_callback = zloc__remote_merge_next_callback;
+	allocator->merge_prev_callback = zloc__remote_merge_prev_callback;
+
+	return allocator;
+}
+
+void *zloc_AllocateRemote(zloc_allocator * allocator, zloc_size remote_size) {
+	ZLOC_ASSERT(allocator->minimum_allocation_size > 0);
+	remote_size = zloc__adjust_size(remote_size, allocator->minimum_allocation_size, zloc__MEMORY_ALIGNMENT);
+	void *allocation = zloc__allocate(allocator, (remote_size / allocator->minimum_allocation_size) * (allocator->block_extension_size + zloc__BLOCK_POINTER_OFFSET), remote_size);
+	return allocation ? (char *)allocation + zloc__MINIMUM_BLOCK_SIZE : 0;
+}
+
+void *zloc__reallocate_remote(zloc_allocator * allocator, void *ptr, zloc_size size, zloc_size remote_size) {
+	zloc__lock_thread_access;
+
+	if (ptr && remote_size == 0) {
+		zloc__unlock_thread_access;
+		zloc_FreeRemote(allocator, ptr);
+		zloc__lock_thread_access;
+	}
+
+	if (!ptr) {
+		zloc__unlock_thread_access;
+		return zloc__allocate(allocator, size, remote_size);
+	}
+
+	zloc_header *block = zloc__block_from_allocation(ptr);
+	zloc_header *next_block = zloc__next_physical_block(block);
+	void *allocation = 0;
+	zloc_size current_size = zloc__block_size(block);
+	zloc_size current_remote_size = zloc__do_size_class_callback(block);
+	zloc_size adjusted_size = zloc__adjust_size(size, allocator->minimum_allocation_size, zloc__MEMORY_ALIGNMENT);
+	zloc_size combined_size = current_size + zloc__block_size(next_block);
+	zloc_size combined_remote_size = current_remote_size + zloc__do_size_class_callback(next_block);
+	if ((!zloc__next_block_is_free(block) || adjusted_size > combined_size || remote_size > combined_remote_size) && (remote_size > current_remote_size)) {
+		zloc_header *block = zloc__find_free_block(allocator, size, remote_size);
+		if (block) {
+			allocation = zloc__block_user_ptr(block);
+		}
+
+		if (allocation) {
+			zloc__do_unable_to_reallocate_callback;
+			zloc__unlock_thread_access;
+			zloc_Free(allocator, ptr);
+			zloc__lock_thread_access;
+		}
+	} else {
+		//Reallocation is possible
+		if (remote_size > current_remote_size)
+		{
+			zloc__merge_with_next_block(allocator, block);
+			zloc__mark_block_as_used(block);
+		}
+		zloc_header *split_block = zloc__maybe_split_block(allocator, block, adjusted_size, remote_size);
+		allocation = zloc__block_user_ptr(split_block);
+	}
+
+	zloc__unlock_thread_access;
+	return allocation;
+}
+
+void *zloc_ReallocateRemote(zloc_allocator * allocator, void *block_extension, zloc_size remote_size) {
+	ZLOC_ASSERT(allocator->minimum_allocation_size > 0);
+	void *allocation = zloc__reallocate_remote(allocator, block_extension ? zloc_AllocationFromExtensionPtr(block_extension) : block_extension, (remote_size / allocator->minimum_allocation_size) * (allocator->block_extension_size + zloc__BLOCK_POINTER_OFFSET), remote_size);
+	return allocation ? (char *)allocation + zloc__MINIMUM_BLOCK_SIZE : 0;
+}
+
+int zloc_FreeRemote(zloc_allocator * allocator, void *block_extension) {
+	void *allocation = (char *)block_extension - zloc__MINIMUM_BLOCK_SIZE;
+	return zloc_Free(allocator, allocation);
 }
 
 zloc_linear_allocator_t *zloc_InitialiseLinearAllocator(void *memory, zloc_size size) {
@@ -1631,11 +1355,11 @@ zloc_linear_allocator_t *zloc_InitialiseLinearAllocator(void *memory, zloc_size 
 	return allocator;
 }
 
-void zloc_ResetLinearAllocator(zloc_linear_allocator_t *allocator) {
+void zloc_ResetLinearAllocator(zloc_linear_allocator_t * allocator) {
 	allocator->current_offset = sizeof(zloc_linear_allocator_t);
 }
 
-void *zloc_LinearAllocation(zloc_linear_allocator_t *allocator, zloc_size size_requested) {
+void *zloc_LinearAllocation(zloc_linear_allocator_t * allocator, zloc_size size_requested) {
 	if (!allocator) return NULL;
 
 	zloc_size actual_size = size_requested < zloc__MINIMUM_BLOCK_SIZE ? zloc__MINIMUM_BLOCK_SIZE : size_requested;
@@ -1655,17 +1379,20 @@ void *zloc_LinearAllocation(zloc_linear_allocator_t *allocator, zloc_size size_r
 	return aligned_address;
 }
 
-zloc_size zloc_GetMarker(zloc_linear_allocator_t *allocator) {
+zloc_size zloc_GetMarker(zloc_linear_allocator_t * allocator) {
 	ZLOC_ASSERT(allocator);     //Not a valid allocator!
 	return allocator->current_offset;
 }
 
-void zloc_ResetToMarker(zloc_linear_allocator_t *allocator, zloc_size marker) {
+void zloc_ResetToMarker(zloc_linear_allocator_t * allocator, zloc_size marker) {
 	ZLOC_ASSERT(allocator);     //Not a valid allocator!
 	//marker point not valid!
 	ZLOC_ASSERT(marker >= sizeof(zloc_linear_allocator_t) && marker <= allocator->current_offset && marker <= allocator->buffer_size);     //Not a valid allocator!
 	allocator->current_offset = marker;
 }
+
+#endif
+
 
 #endif
 
@@ -1710,34 +1437,3 @@ ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------------
 */
-
-/*
-This file contains code derived from Offset Allocator written by Sebastian Aaltonen.
-(any code that relates to the gpu allocation)
-The original source code for that is available at https://github.com/sebbbi/OffsetAllocator.
-
-The original code for that is licensed under the MIT License:
-
-MIT License
-
-Copyright (c) 2023 Sebastian Aaltonen
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-
