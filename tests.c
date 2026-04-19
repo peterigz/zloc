@@ -8,16 +8,18 @@
 #define ZLOC_IMPLEMENTATION
 //#define ZLOC_OUTPUT_ERROR_MESSAGES
 #define ZLOC_THREAD_SAFE
-//#define ZLOC_ENABLE_REMOTE_MEMORY
+#define ZLOC_ENABLE_REMOTE_MEMORY
 #define ZLOC_MAX_SIZE_INDEX 35		//max block size 34GB
 #define ZLOC_EXTRA_DEBUGGING
-#include "minimal/zloc_min.h"
-//#include "zloc.h"
+#define ZLOC_SAFEGUARDS
+
+//#include "minimal/zloc_min.h"
+#include "zloc.h"
 #define _TIMESPEC_DEFINED
 #ifdef _WIN32
 #ifdef ZLOC_THREAD_SAFE	
 #include <pthread.h>
-typedef void *(PTW32_CDECL *zloc__allocation_thread)(void*);
+typedef void *(*zloc__allocation_thread)(void*);
 #endif
 #include <windows.h>
 #define zloc_sleep(seconds) Sleep(seconds)
@@ -71,10 +73,12 @@ unsigned long long _zloc_random_range(zloc_random *random, unsigned long long ma
 	return (unsigned long long)a;
 };
 
-void PrintTestResult(const char *message, int result) {
-	printf("%s", message);
-	printf("%s [%s]\033[0m\n", result == 0 ? "\033[31m" : "\033[32m", result == 0 ? "FAILED" : "PASSED");
-}
+#define PrintTestResult(message, expr) do { \
+	printf("%s", (message)); fflush(stdout); \
+	int _zloc_test_result = (expr); \
+	printf("%s [%s]\033[0m\n", _zloc_test_result == 0 ? "\033[31m" : "\033[32m", _zloc_test_result == 0 ? "FAILED" : "PASSED"); \
+	fflush(stdout); \
+} while (0)
 
 static void zloc__output(void* ptr, size_t size, int free, void* user, int is_final_output)
 {
@@ -913,7 +917,14 @@ int TestRemovingExtraPool(zloc_uint iterations, zloc_size pool_size, zloc_size m
 			}
 			assert(zloc_VerifyBlocks(zloc__allocator_first_block(allocator), 0, 0) == zloc__OK);
 		}
-		if (!zloc_RemovePool(allocator, extra_pool)) {
+		// The extra pool is only added if we hit OOM in the loop above. If the random
+		// allocation pattern fits the original pool, no extra pool exists to remove
+		// and the test hasn't actually exercised the extra-pool path.
+		if (extra_pool) {
+			if (!zloc_RemovePool(allocator, extra_pool)) {
+				result = 0;
+			}
+		} else {
 			result = 0;
 		}
 		if (!zloc_RemovePool(allocator, zloc_GetPool(allocator))) {
@@ -924,6 +935,278 @@ int TestRemovingExtraPool(zloc_uint iterations, zloc_size pool_size, zloc_size m
 			zloc_free_memory(extra_pool);
 		}
 	}
+	return result;
+}
+
+//Linear allocator tests
+
+int TestLinearAllocatorInit(void) {
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[256];
+	if (zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer)) != 1) result = 0;
+	if (a.data != buffer) result = 0;
+	if (a.buffer_size != sizeof(buffer)) result = 0;
+	if (a.current_offset != 0) result = 0;
+	if (a.user_data != 0) result = 0;
+	if (a.next != 0) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorInitNullMemory(void) {
+	zloc_linear_allocator_t a;
+	return zloc_InitialiseLinearAllocator(&a, NULL, 256) == 0;
+}
+
+int TestLinearAllocatorInitSizeTooSmall(void) {
+	zloc_linear_allocator_t a;
+	char buffer[zloc__MINIMUM_BLOCK_SIZE];
+	return zloc_InitialiseLinearAllocator(&a, buffer, zloc__MINIMUM_BLOCK_SIZE) == 0;
+}
+
+int TestLinearAllocatorBasicAllocation(void) {
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[256];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	void *p = zloc_LinearAllocation(&a, 32);
+	if (!p) result = 0;
+	if ((char *)p < buffer || (char *)p + 32 > buffer + sizeof(buffer)) result = 0;
+	if (a.current_offset < 32) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorAlignment(void) {
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[1024];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	for (int i = 0; i < 20; ++i) {
+		zloc_size sz = (zloc_size)(1 + i * 3);
+		void *p = zloc_LinearAllocation(&a, sz);
+		if (!p) { result = 0; break; }
+		if (!zloc__ptr_is_aligned(p, sizeof(void *))) { result = 0; break; }
+	}
+	return result;
+}
+
+int TestLinearAllocatorMinSize(void) {
+	//Sub-minimum requests still consume at least zloc__MINIMUM_BLOCK_SIZE bytes.
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[256];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	zloc_size before = zloc_GetMarker(&a);
+	void *p = zloc_LinearAllocation(&a, 1);
+	zloc_size after = zloc_GetMarker(&a);
+	if (!p) result = 0;
+	if (after == before) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorOOM(void) {
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[128];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	void *p1 = zloc_LinearAllocation(&a, 64);
+	void *p2 = zloc_LinearAllocation(&a, 64);
+	void *p3 = zloc_LinearAllocation(&a, 64);
+	if (!p1 || !p2) result = 0;
+	if (p3 != NULL) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorReset(void) {
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[256];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	void *p1 = zloc_LinearAllocation(&a, 64);
+	if (!p1) result = 0;
+	zloc_ResetLinearAllocator(&a);
+	if (zloc_GetMarker(&a) != 0) result = 0;
+	void *p2 = zloc_LinearAllocation(&a, 64);
+	if (p2 != p1) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorMarker(void) {
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[512];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	void *p0 = zloc_LinearAllocation(&a, 64);
+	zloc_size marker = zloc_GetMarker(&a);
+	void *p1 = zloc_LinearAllocation(&a, 32);
+	void *p2 = zloc_LinearAllocation(&a, 32);
+	if (!p0 || !p1 || !p2) result = 0;
+	zloc_ResetToMarker(&a, marker);
+	if (zloc_GetMarker(&a) != marker) result = 0;
+	void *p3 = zloc_LinearAllocation(&a, 32);
+	if (p3 != p1) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorResetToMarkerZero(void) {
+	//Marker grabbed immediately after init is 0; resetting to it must succeed
+	//and reissue the buffer's very first address.
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[256];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	zloc_size marker = zloc_GetMarker(&a);
+	if (marker != 0) result = 0;
+	void *p1 = zloc_LinearAllocation(&a, 64);
+	zloc_LinearAllocation(&a, 64);
+	zloc_ResetToMarker(&a, marker);
+	if (zloc_GetMarker(&a) != 0) result = 0;
+	void *p2 = zloc_LinearAllocation(&a, 64);
+	if (p2 != p1) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorUserData(void) {
+	int result = 1;
+	zloc_linear_allocator_t a;
+	char buffer[64];
+	zloc_InitialiseLinearAllocator(&a, buffer, sizeof(buffer));
+	int sentinel = 42;
+	zloc_SetLinearAllocatorUserData(&a, &sentinel);
+	if (a.user_data != &sentinel) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorAddNext(void) {
+	int result = 1;
+	zloc_linear_allocator_t a, b, c;
+	char ba[64], bb[64], bc[64];
+	zloc_InitialiseLinearAllocator(&a, ba, sizeof(ba));
+	zloc_InitialiseLinearAllocator(&b, bb, sizeof(bb));
+	zloc_InitialiseLinearAllocator(&c, bc, sizeof(bc));
+	zloc_AddNextLinearAllocator(&a, &b);
+	if (a.next != &b) result = 0;
+	zloc_AddNextLinearAllocator(&a, &c);
+	if (b.next != &c) result = 0;
+	if (c.next != 0) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorChainedSpill(void) {
+	int result = 1;
+	zloc_linear_allocator_t a, b;
+	char ba[128], bb[128];
+	zloc_InitialiseLinearAllocator(&a, ba, sizeof(ba));
+	zloc_InitialiseLinearAllocator(&b, bb, sizeof(bb));
+	zloc_AddNextLinearAllocator(&a, &b);
+	void *p1 = zloc_LinearAllocation(&a, 96);
+	void *p2 = zloc_LinearAllocation(&a, 96);
+	if (!p1 || !p2) result = 0;
+	if ((char *)p1 < ba || (char *)p1 >= ba + sizeof(ba)) result = 0;
+	if ((char *)p2 < bb || (char *)p2 >= bb + sizeof(bb)) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorChainedExhaustion(void) {
+	//Fill all chained allocators, next allocation must return NULL.
+	int result = 1;
+	zloc_linear_allocator_t a, b;
+	char ba[128], bb[128];
+	zloc_InitialiseLinearAllocator(&a, ba, sizeof(ba));
+	zloc_InitialiseLinearAllocator(&b, bb, sizeof(bb));
+	zloc_AddNextLinearAllocator(&a, &b);
+	if (!zloc_LinearAllocation(&a, 96)) result = 0;
+	if (!zloc_LinearAllocation(&a, 96)) result = 0;
+	if (zloc_LinearAllocation(&a, 96) != NULL) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorCapacity(void) {
+	int result = 1;
+	zloc_linear_allocator_t a, b, c;
+	char ba[64], bb[128], bc[256];
+	zloc_InitialiseLinearAllocator(&a, ba, sizeof(ba));
+	zloc_InitialiseLinearAllocator(&b, bb, sizeof(bb));
+	zloc_InitialiseLinearAllocator(&c, bc, sizeof(bc));
+	if (zloc_GetLinearAllocatorCapacity(&a) != sizeof(ba)) result = 0;
+	zloc_AddNextLinearAllocator(&a, &b);
+	zloc_AddNextLinearAllocator(&a, &c);
+	if (zloc_GetLinearAllocatorCapacity(&a) != sizeof(ba) + sizeof(bb) + sizeof(bc)) result = 0;
+	return result;
+}
+
+int TestLinearAllocatorChainedReset(void) {
+	int result = 1;
+	zloc_linear_allocator_t a, b;
+	char ba[128], bb[128];
+	zloc_InitialiseLinearAllocator(&a, ba, sizeof(ba));
+	zloc_InitialiseLinearAllocator(&b, bb, sizeof(bb));
+	zloc_AddNextLinearAllocator(&a, &b);
+	zloc_LinearAllocation(&a, 96);
+	zloc_LinearAllocation(&a, 96);
+	if (a.current_offset == 0 || b.current_offset == 0) result = 0;
+	zloc_ResetLinearAllocator(&a);
+	if (a.current_offset != 0 || b.current_offset != 0) result = 0;
+	return result;
+}
+
+int TestLinearAllocationNullAllocator(void) {
+	return zloc_LinearAllocation(NULL, 32) == NULL;
+}
+
+int TestLinearAllocatorWriteReadback(void) {
+	//Allocate distinct ranges, write a per-range pattern, verify no overlap.
+	int result = 1;
+	zloc_linear_allocator_t a;
+	enum { N = 32, BUF = 4096 };
+	char *buffer = (char *)malloc(BUF);
+	zloc_InitialiseLinearAllocator(&a, buffer, BUF);
+	char *ptrs[N];
+	zloc_size sizes[N];
+	for (int i = 0; i < N; ++i) {
+		sizes[i] = 16 + (zloc_size)((i * 3) % 48);
+		ptrs[i] = (char *)zloc_LinearAllocation(&a, sizes[i]);
+		if (!ptrs[i]) { result = 0; break; }
+		memset(ptrs[i], (char)(i + 1), sizes[i]);
+	}
+	for (int i = 0; i < N && result; ++i) {
+		for (zloc_size j = 0; j < sizes[i]; ++j) {
+			if (ptrs[i][j] != (char)(i + 1)) { result = 0; break; }
+		}
+	}
+	free(buffer);
+	return result;
+}
+
+int TestLinearAllocatorStress(zloc_uint iterations, zloc_size buffer_size, zloc_size min_alloc, zloc_size max_alloc, zloc_random *random) {
+	//Random small allocations across a chain of three buffers; verify alignment
+	//and that every successful allocation lies inside one of the chained buffers.
+	int result = 1;
+	zloc_linear_allocator_t a, b, c;
+	char *ba = (char *)malloc(buffer_size);
+	char *bb = (char *)malloc(buffer_size);
+	char *bc = (char *)malloc(buffer_size);
+	zloc_InitialiseLinearAllocator(&a, ba, buffer_size);
+	zloc_InitialiseLinearAllocator(&b, bb, buffer_size);
+	zloc_InitialiseLinearAllocator(&c, bc, buffer_size);
+	zloc_AddNextLinearAllocator(&a, &b);
+	zloc_AddNextLinearAllocator(&a, &c);
+	for (zloc_uint i = 0; i < iterations; ++i) {
+		zloc_size sz = (zloc_size)_zloc_random_range(random, max_alloc - min_alloc) + min_alloc;
+		void *p = zloc_LinearAllocation(&a, sz);
+		if (!p) {
+			//Reset the chain and continue, simulating a frame-style allocator.
+			zloc_ResetLinearAllocator(&a);
+			continue;
+		}
+		if (!zloc__ptr_is_aligned(p, sizeof(void *))) { result = 0; break; }
+		int in_a = (char *)p >= ba && (char *)p + sz <= ba + buffer_size;
+		int in_b = (char *)p >= bb && (char *)p + sz <= bb + buffer_size;
+		int in_c = (char *)p >= bc && (char *)p + sz <= bc + buffer_size;
+		if (!(in_a || in_b || in_c)) { result = 0; break; }
+		memset(p, (int)(i & 0xff), sz);
+	}
+	free(ba); free(bb); free(bc);
 	return result;
 }
 
@@ -1156,6 +1439,7 @@ int TestRemoteMemoryBlockManagement(zloc_uint iterations, zloc_size pool_size, z
 	zloc_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	zloc_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
+	allocator->remote_user_data = &pools;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
@@ -1259,6 +1543,7 @@ int TestRemoteMemoryReallocation(zloc_size pool_size, zloc_size minimum_remote_a
 	zloc_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	zloc_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
+	allocator->remote_user_data = &pools;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
@@ -1298,6 +1583,7 @@ int TestRemoteMemoryReallocationIterations(zloc_uint iterations, zloc_size pool_
 	zloc_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	zloc_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
+	allocator->remote_user_data = &pools;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
@@ -1354,6 +1640,7 @@ int TestRemoteMemoryReallocationIterationsFreeing(zloc_uint iterations, zloc_siz
 	zloc_SetBlockExtensionSize(allocator, sizeof(remote_buffer));
 	zloc_SetMinimumAllocationSize(allocator, minimum_remote_allocation_size);
 	allocator->user_data = &pools;
+	allocator->remote_user_data = &pools;
 	allocator->add_pool_callback = on_add_pool;
 	allocator->split_block_callback = on_split_block;
 	allocator->unable_to_reallocate_callback = on_reallocation_copy;
@@ -1433,7 +1720,7 @@ int main() {
 	PrintTestResult("Test: Many random allocations and frees, add pools as needed: 1000 iterations, 128MB pool size, max allocation: 2MB - 10MB", TestManyAllocationsAndFreesAddPools(1000, zloc__MEGABYTE(128), zloc__MEGABYTE(2), zloc__MEGABYTE(10), &random));
 	PrintTestResult("Test: Allocate blocks in 128mb pool until full, then free all blocks one by one resulting in 1 block left at the end after merges", TestAllocatingUntilOutOfSpaceThenFreeAll(1000, zloc__MEGABYTE(128), zloc__KILOBYTE(128), zloc__MEGABYTE(10), &random));
 	PrintTestResult("Test: Allocate blocks in 128mb pool until full, then free all blocks and remove the pool", TestRemovingPool(1000, zloc__MEGABYTE(128), zloc__KILOBYTE(128), zloc__MEGABYTE(10), &random));
-	PrintTestResult("Test: Allocate blocks in 128mb pool until full, then free all blocks and remove the pool", TestRemovingExtraPool(1000, zloc__MEGABYTE(128), zloc__KILOBYTE(128), zloc__MEGABYTE(10), &random));
+	PrintTestResult("Test: Allocate blocks in extra 128mb pool until full, then free all blocks and remove the pool", TestRemovingExtraPool(1000, zloc__MEGABYTE(128), zloc__MEGABYTE(1), zloc__MEGABYTE(10), &random));
 	PrintTestResult("Test: Multiple same size block allocations and frees", TestAllocateFreeSameSizeBlocks());
 	PrintTestResult("Test: Pool passed to initialiser is too small", TestPoolTooSmall());
 	PrintTestResult("Test: Non aligned memory passed to Initialiser", TestNonAlignedMemoryPool());
@@ -1462,6 +1749,27 @@ int main() {
 #if defined(zloc__64BIT)
 	PrintTestResult("Test: Create a large (>4gb) memory pool, and allocate half of it", TestAllocation64bit());
 #endif
+
+	//Linear allocator
+	PrintTestResult("Test: Linear allocator init succeeds and zeros fields", TestLinearAllocatorInit());
+	PrintTestResult("Test: Linear allocator init rejects NULL memory", TestLinearAllocatorInitNullMemory());
+	PrintTestResult("Test: Linear allocator init rejects size <= minimum block size", TestLinearAllocatorInitSizeTooSmall());
+	PrintTestResult("Test: Linear allocator basic allocation lies within buffer", TestLinearAllocatorBasicAllocation());
+	PrintTestResult("Test: Linear allocator returns pointer-aligned addresses", TestLinearAllocatorAlignment());
+	PrintTestResult("Test: Linear allocator sub-minimum requests consume minimum block size", TestLinearAllocatorMinSize());
+	PrintTestResult("Test: Linear allocator returns NULL when out of memory and no chain", TestLinearAllocatorOOM());
+	PrintTestResult("Test: Linear allocator reset returns offset to 0 and reissues same address", TestLinearAllocatorReset());
+	PrintTestResult("Test: Linear allocator marker save / reset-to-marker round-trip", TestLinearAllocatorMarker());
+	PrintTestResult("Test: Linear allocator reset-to-marker(0) returns to start of buffer", TestLinearAllocatorResetToMarkerZero());
+	PrintTestResult("Test: Linear allocator user_data setter", TestLinearAllocatorUserData());
+	PrintTestResult("Test: Linear allocator AddNext appends to end of chain", TestLinearAllocatorAddNext());
+	PrintTestResult("Test: Linear allocator allocation spills into next when first is full", TestLinearAllocatorChainedSpill());
+	PrintTestResult("Test: Linear allocator chain returns NULL when every node is full", TestLinearAllocatorChainedExhaustion());
+	PrintTestResult("Test: Linear allocator capacity sums across the chain", TestLinearAllocatorCapacity());
+	PrintTestResult("Test: Linear allocator reset on head clears every node in the chain", TestLinearAllocatorChainedReset());
+	PrintTestResult("Test: Linear allocation on NULL allocator returns NULL", TestLinearAllocationNullAllocator());
+	PrintTestResult("Test: Linear allocator allocations do not overlap (write/readback)", TestLinearAllocatorWriteReadback());
+	PrintTestResult("Test: Linear allocator stress, 10000 iterations, 1KB buffers x 3, 16b - 256b allocations", TestLinearAllocatorStress(10000, zloc__KILOBYTE(1), 16, 256, &random));
 
 #ifdef ZLOC_ENABLE_REMOTE_MEMORY
 	PrintTestResult("Test: Remote memory management, 10000 iterations, allocate 16b - 1k, add 1mb pools as needed.", TestRemoteMemoryBlockManagement(10000, zloc__MEGABYTE(1), 512, 16, zloc__KILOBYTE(1), &random));
