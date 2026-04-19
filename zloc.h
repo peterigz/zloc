@@ -1,6 +1,39 @@
 /*	Pocket Allocator, a Two Level Segregated Fit memory allocator
 
-	This software is dual-licensed. See bottom of file for license details.
+Zest Allocator - A Two Level Segregated Fit Memory Allocator
+
+This software is dual-licensed to the public domain and under the following license: you are granted a perpetual, 
+irrevocable license to copy, modify, publish, and distribute this file as you see fit. See LICENSE at end of file for details.
+
+This library is a single header mimimal allocator based on the following paper: http://www.gii.upv.es/tlsf/files/ecrts04_tlsf.pdf
+
+Thanks to the authors of the paper and also Sean Barret for his how to make a single header-file library guidelines, 
+and also to Matthew Conte who's own TLSF lib I referenced when trying to understand how the algorythm works. 
+His library can be found here: https://github.com/mattconte/tlsf
+
+## What's this library for?
+This library is for sub allocating memory blocks within larger memory allocation pools that you might create with 
+malloc or VirtualAlloc etc.
+
+Allocating and freeing those memory blocks happens at O(1) time complexity and should for the most part keep fragmentation 
+at a minimum.
+
+This is meant for use in trusted environments or apps where security isn't going to be an issue. I made it as a convenient 
+way to sub allocate in larger memory pools to avoid clogging things up with lots of mallocs everywhere. You can also use it to manage memory ranges on a separate device like GPU memory.
+
+A small linear (arena) allocator is bundled alongside the main allocator for transient scratch memory.
+
+## How do I use it?
+Add `#define ZLOC_IMPLEMENTATION` before you include this file in *one* C or C++ file to create the implementation.
+
+	// i.e. it should look like this:
+	#include ...
+	#include ...
+	#include ...
+	#define ZLOC_IMPLEMENTATION
+	#include "zloc.h"
+
+See the README.md file for more details on how to use with examples.
 */
 
 #ifndef ZLOC_INCLUDE_H
