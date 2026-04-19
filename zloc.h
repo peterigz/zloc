@@ -306,6 +306,7 @@ ZLOC_API void* zloc_PromoteLinearBlock(zloc_allocator *allocator, void* linear_a
 ZLOC_API zloc_bool zloc_RemovePool(zloc_allocator *allocator, zloc_pool *pool);
 ZLOC_API void zloc_SetMinimumAllocationSize(zloc_allocator *allocator, zloc_size size);
 ZLOC_API zloc_pool_stats_t zloc_CreateMemorySnapshot(const zloc_pool *pool);
+ZLOC_API void zloc_VerifyPool(zloc_allocator *allocator, const zloc_pool *pool);
 
 //Remote memory
 ZLOC_API zloc_allocator *zloc_InitialiseAllocatorForRemote(void *memory);
@@ -375,6 +376,8 @@ static inline zloc_bool zloc__is_free_block(const zloc_header *block) {
 //It also walks every free list verifying bidirectional link integrity, free flags, and size-class membership.
 //The most common cause of asserts here is where memory has been written to the wrong address. Check for buffers where they where resized
 //but the buffer pointer that was being written too was not updated after the resize for example.
+//For complementary coverage of the physical block chain (boundary tags, merge invariants, intact prev/next links),
+//see zloc_VerifyPool.
 static inline void zloc__verify_lists(zloc_allocator *allocator) {
 	zloc_header *null_block = &allocator->null_block;
 	for (int fli = 0; fli != zloc__FIRST_LEVEL_INDEX_COUNT; ++fli) {
@@ -946,7 +949,6 @@ void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
 	if (ptr && size == 0) {
 		zloc__unlock_thread_access;
 		zloc_Free(allocator, ptr);
-		zloc__lock_thread_access;
 		return 0;
 	}
 
@@ -1001,17 +1003,17 @@ void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size 
 	if (block) {
 		void *user_ptr = zloc__block_user_ptr(block);
 		void *aligned_ptr = zloc__align_ptr(user_ptr, alignment);
-		zloc_size gap = (zloc_size)(((ptrdiff_t)aligned_ptr) - (ptrdiff_t)user_ptr);
+		zloc_size gap = (zloc_size)((uintptr_t)aligned_ptr - (uintptr_t)user_ptr);
 
 		/* If gap size is too small, offset to next aligned boundary. */
 		if (gap && gap < gap_minimum)
 		{
 			zloc_size gap_remain = gap_minimum - gap;
 			zloc_size offset = zloc__Max(gap_remain, alignment);
-			const void* next_aligned = (void*)((ptrdiff_t)aligned_ptr + offset);
+			const void* next_aligned = (void*)((uintptr_t)aligned_ptr + offset);
 
 			aligned_ptr = zloc__align_ptr(next_aligned, alignment);
-			gap = (zloc_size)((ptrdiff_t)aligned_ptr - (ptrdiff_t)user_ptr);
+			gap = (zloc_size)((uintptr_t)aligned_ptr - (uintptr_t)user_ptr);
 		}
 
 		if (gap)
@@ -1119,8 +1121,7 @@ int zloc_SafeCopy(void *dst, void *src, zloc_size size) {
 		return 0;
 	}
 	zloc_header *next_physical_block = zloc__next_physical_block(block);
-	ptrdiff_t diff_check = (ptrdiff_t)((char *)dst + size) - (ptrdiff_t)next_physical_block;
-	if (diff_check > 0) {
+	if ((char *)dst + size > (char *)next_physical_block) {
 		assert(0);  //Trying to copy outside of the memory block
 		return 0;
 	}
@@ -1131,13 +1132,59 @@ int zloc_SafeCopy(void *dst, void *src, zloc_size size) {
 int zloc_SafeCopyBlock(void *dst_block_start, void *dst, const void *src, zloc_size size) {
 	zloc_header *block = zloc__block_from_allocation(dst_block_start);
 	zloc_header *next_physical_block = zloc__next_physical_block(block);
-	ptrdiff_t diff_check = (ptrdiff_t)((char *)dst + size) - (ptrdiff_t)next_physical_block;
-	if (diff_check > 0) {
+	if ((char *)dst + size > (char *)next_physical_block) {
 		assert(0);  //Trying to copy outside of the memory block
 		return 0;
 	}
 	memcpy(dst, src, size);
 	return 1;
+}
+
+//Walks the physical block chain of a single pool and asserts the structural invariants that
+//zloc__verify_lists cannot see:
+//  - every block's size is aligned to zloc__MEMORY_ALIGNMENT
+//  - the chain is linked correctly: block->next_physical_block->prev_physical_block == block
+//  - boundary tags are coherent: this block's BLOCK_IS_FREE matches the next block's PREV_BLOCK_IS_FREE
+//  - no two adjacent free blocks exist (they should have been merged on free)
+//  - the terminating sentinel has size 0 and points back at the last real block
+//Use alongside zloc__verify_lists for the most thorough corruption check. The pool argument is the
+//pointer originally returned from zloc_AddPool / zloc_GetPool.
+void zloc_VerifyPool(zloc_allocator *allocator, const zloc_pool *pool) {
+	zloc_header *block = zloc__first_block_in_pool(pool);
+	zloc_header *prev = 0;
+	int safety = 0;
+	while (!zloc__is_last_block_in_pool(block)) {
+		zloc_size block_size = zloc__do_size_class_callback(block);
+		//Block size must be a multiple of the memory alignment
+		ZLOC_ASSERT(zloc__is_aligned(block_size, zloc__MEMORY_ALIGNMENT));
+		if (prev) {
+			//Physical chain link: this block must point back to the block we walked from
+			ZLOC_ASSERT(block->prev_physical_block == prev);
+			//Boundary tag coherence: PREV_BLOCK_IS_FREE on this block must match prev's actual free state
+			zloc_bool prev_was_free = zloc__is_free_block(prev);
+			zloc_bool prev_flag_says_free = zloc__prev_is_free_block(block);
+			ZLOC_ASSERT(prev_was_free == (zloc_bool)(prev_flag_says_free != 0));
+			//Two consecutive free blocks should never exist - they should have been merged on free
+			if (prev_was_free) {
+				ZLOC_ASSERT(!zloc__is_free_block(block));
+			}
+		} else {
+			//First block in a pool has no previous physical block, so its PREV_BLOCK_IS_FREE flag must be clear
+			ZLOC_ASSERT(!zloc__prev_is_free_block(block));
+		}
+		prev = block;
+		block = zloc__next_physical_block(block);
+		ZLOC_ASSERT(++safety < 10000000);
+	}
+	//Sentinel: size 0, marked as used, points back at the last real block, and its PREV_BLOCK_IS_FREE
+	//flag still has to agree with prev's free state.
+	ZLOC_ASSERT(zloc__is_used_block(block));
+	if (prev) {
+		ZLOC_ASSERT(block->prev_physical_block == prev);
+		zloc_bool prev_was_free = zloc__is_free_block(prev);
+		zloc_bool prev_flag_says_free = zloc__prev_is_free_block(block);
+		ZLOC_ASSERT(prev_was_free == (zloc_bool)(prev_flag_says_free != 0));
+	}
 }
 
 zloc_pool_stats_t zloc_CreateMemorySnapshot(const zloc_pool *pool) {
@@ -1247,7 +1294,6 @@ void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size si
 	if (ptr && remote_size == 0) {
 		zloc__unlock_thread_access;
 		zloc_FreeRemote(allocator, ptr);
-		zloc__lock_thread_access;
 		return 0;
 	}
 
