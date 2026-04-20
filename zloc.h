@@ -126,8 +126,9 @@ zloc__static_assert(ZLOC_MAX_SIZE_INDEX < 64);
 extern "C" {
 #endif
 
+#define zloc__MAXIMUM_BLOCK_SIZE (ZLOC_ONE << ZLOC_MAX_SIZE_INDEX)
+
 enum zloc__constants {
-	zloc__MAXIMUM_BLOCK_SIZE = (ZLOC_ONE << ZLOC_MAX_SIZE_INDEX),
 	zloc__MEMORY_ALIGNMENT = 1 << MEMORY_ALIGNMENT_LOG2,
 	zloc__SECOND_LEVEL_INDEX_LOG2 = 5,
 	zloc__FIRST_LEVEL_INDEX_COUNT = ZLOC_MAX_SIZE_INDEX,
