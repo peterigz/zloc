@@ -541,17 +541,17 @@ static inline zloc_bool zloc__is_last_block_in_pool(const zloc_header *block) {
 //Write functions
 #if defined(ZLOC_THREAD_SAFE)
 
-#define zloc__lock_thread_access												\
+#define zloc__lock_thread_access(allocator)												\
 do { \
 } while (0 != zloc__compare_and_exchange(&allocator->access, 1, 0)); \
 ZLOC_ASSERT(allocator->access != 0);
 
-#define zloc__unlock_thread_access allocator->access = 0;
+#define zloc__unlock_thread_access(allocator) allocator->access = 0;
 
 #else
 
-#define zloc__lock_thread_access
-#define zloc__unlock_thread_access
+#define zloc__lock_thread_access(allocator)
+#define zloc__unlock_thread_access(allocator)
 
 #endif
 void *zloc__allocate(zloc_allocator *allocator, zloc_size size, zloc_size remote_size);
@@ -908,7 +908,7 @@ zloc_pool *zloc_GetPool(zloc_allocator *allocator) {
 }
 
 zloc_pool *zloc_AddPool(zloc_allocator *allocator, void *memory, zloc_size size) {
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 
 	ZLOC_ASSERT(size <= zloc__MAXIMUM_BLOCK_SIZE && "Tried to add a memory pool that is larger then the maximum block size.");
 
@@ -937,21 +937,21 @@ zloc_pool *zloc_AddPool(zloc_allocator *allocator, void *memory, zloc_size size)
 	allocator->stats.blocks_in_use++;
 	zloc__push_block(allocator, block);
 
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 	return (zloc_pool*)memory;
 }
 
 zloc_bool zloc_RemovePool(zloc_allocator *allocator, zloc_pool *pool) {
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 	zloc_header *block = zloc__first_block_in_pool(pool);
 
 	if (zloc__is_free_block(block) && !zloc__next_block_is_free(block) && zloc__is_last_block_in_pool(zloc__next_physical_block(block))) {
 		zloc__remove_block_from_segregated_list(allocator, block);
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		return 1;
 	}
 	#if defined(ZLOC_THREAD_SAFE)
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 	ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: In order to remove a pool there must be only 1 free block in the pool. Was possibly freed by another thread\n", ZLOC_ERROR_NAME);
 	#else
 	ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: In order to remove a pool there must be only 1 free block in the pool.\n", ZLOC_ERROR_NAME);
@@ -960,32 +960,32 @@ zloc_bool zloc_RemovePool(zloc_allocator *allocator, zloc_pool *pool) {
 }
 
 void *zloc__allocate(zloc_allocator *allocator, zloc_size size, zloc_size remote_size) {
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 	size = zloc__adjust_size(size, zloc__MINIMUM_BLOCK_SIZE, zloc__MEMORY_ALIGNMENT);
 	zloc_header *block = zloc__find_free_block(allocator, size, remote_size);
 
 	if (block) {
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		return zloc__block_user_ptr(block);
 	}
 
 	//Out of memory;
 	ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: Not enough memory in pool to allocate %llu bytes\n", ZLOC_ERROR_NAME, zloc__map_size);
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 	return 0;
 }
 
 void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 
 	if (ptr && size == 0) {
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		zloc_Free(allocator, ptr);
 		return 0;
 	}
 
 	if (!ptr) {
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		return zloc__allocate(allocator, size, 0);
 	}
 
@@ -1005,9 +1005,9 @@ void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
 			memcpy(allocation, ptr, smallest_size);
 			//Note if this callback calls back into reallocate or allocate then you will get a spin lock.
 			zloc__do_unable_to_reallocate_callback;
-			zloc__unlock_thread_access;
+			zloc__unlock_thread_access(allocator);
 			zloc_Free(allocator, ptr);
-			zloc__lock_thread_access;
+			zloc__lock_thread_access(allocator);
 		}
 	} else {
 		//Reallocation is possible
@@ -1019,12 +1019,12 @@ void *zloc_Reallocate(zloc_allocator *allocator, void *ptr, zloc_size size) {
 		allocation = zloc__block_user_ptr(split_block);
 	}
 
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 	return allocation;
 }
 
 void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size alignment) {
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 	zloc_size adjusted_size = zloc__adjust_size(size, allocator->minimum_allocation_size, alignment);
 	zloc_size gap_minimum = sizeof(zloc_header);
 	zloc_size size_with_gap = zloc__adjust_size(adjusted_size + alignment + gap_minimum, allocator->minimum_allocation_size, alignment);
@@ -1057,17 +1057,17 @@ void *zloc_AllocateAligned(zloc_allocator *allocator, zloc_size size, zloc_size 
 		ZLOC_ASSERT(zloc__ptr_is_aligned(zloc__block_user_ptr(block), alignment));	//pointer not aligned to requested alignment
 	}
 	else {
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		return 0;
 	}
 
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 	return zloc__block_user_ptr(block);
 }
 
 int zloc_Free(zloc_allocator *allocator, void* allocation) {
 	if (!allocation) return 0;
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 	zloc_header *block = zloc__block_from_allocation(allocation);
 	#ifdef ZLOC_SAFEGUARDS
 	//Asserting here means that there's probably been a mix up between a context allocator and a device allocator.
@@ -1081,7 +1081,7 @@ int zloc_Free(zloc_allocator *allocator, void* allocation) {
 		zloc__merge_with_next_block(allocator, block);
 	}
 	zloc__push_block(allocator, block);
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 	return 1;
 }
 
@@ -1094,7 +1094,7 @@ ZLOC_API void* zloc_PromoteLinearBlock(zloc_allocator *allocator, void* linear_a
 		return 0;
 	}
 
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 
 	zloc_header *block = zloc__block_from_allocation(linear_alloc_mem);
 	#ifdef ZLOC_SAFEGUARDS
@@ -1104,7 +1104,7 @@ ZLOC_API void* zloc_PromoteLinearBlock(zloc_allocator *allocator, void* linear_a
 	// Ensure the block is valid and currently in use.
 	if (zloc__is_free_block(block)) {
 		ZLOC_PRINT_ERROR(ZLOC_ERROR_COLOR"%s: Cannot promote a block that is already free.\n", ZLOC_ERROR_NAME);
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		return 0;
 	}
 
@@ -1113,7 +1113,7 @@ ZLOC_API void* zloc_PromoteLinearBlock(zloc_allocator *allocator, void* linear_a
 
 	if (original_block_size <= aligned_keep_size + zloc__Max(zloc__MINIMUM_BLOCK_SIZE, allocator->minimum_allocation_size)) {
 		// Not enough space to split, so we just "promote" the whole block by doing nothing.
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		return linear_alloc_mem;
 	}
 
@@ -1141,7 +1141,7 @@ ZLOC_API void* zloc_PromoteLinearBlock(zloc_allocator *allocator, void* linear_a
 
 	zloc__push_block(allocator, trimmed_free_block);
 
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 
 	return linear_alloc_mem;
 }
@@ -1321,16 +1321,16 @@ void *zloc_AllocateRemote(zloc_allocator *allocator, zloc_size remote_size) {
 }
 
 void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size size, zloc_size remote_size) {
-	zloc__lock_thread_access;
+	zloc__lock_thread_access(allocator);
 
 	if (ptr && remote_size == 0) {
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		zloc_FreeRemote(allocator, ptr);
 		return 0;
 	}
 
 	if (!ptr) {
-		zloc__unlock_thread_access;
+		zloc__unlock_thread_access(allocator);
 		return zloc__allocate(allocator, size, remote_size);
 	}
 
@@ -1351,9 +1351,9 @@ void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size si
 		if (allocation) {
 			//Note if this callback calls back into reallocate or allocate then you will get a spin lock.
 			zloc__do_unable_to_reallocate_callback;
-			zloc__unlock_thread_access;
+			zloc__unlock_thread_access(allocator);
 			zloc_Free(allocator, ptr);
-			zloc__lock_thread_access;
+			zloc__lock_thread_access(allocator);
 		}
 	}
 	else {
@@ -1367,7 +1367,7 @@ void *zloc__reallocate_remote(zloc_allocator *allocator, void *ptr, zloc_size si
 		allocation = zloc__block_user_ptr(split_block);
 	}
 
-	zloc__unlock_thread_access;
+	zloc__unlock_thread_access(allocator);
 	return allocation;
 }
 
