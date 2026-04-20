@@ -1475,7 +1475,7 @@ zloc_size zloc_GetLinearAllocatorCapacity(zloc_linear_allocator_t *allocator) {
 	return size;
 }
 
-#endif
+#endif //ZLOC_IMPLEMENTATION
 
 /*
 ------------------------------------------------------------------------------
