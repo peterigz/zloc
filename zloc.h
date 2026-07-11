@@ -707,7 +707,6 @@ static inline void zloc__remove_block_from_segregated_list(zloc_allocator *alloc
 	zloc__mark_block_as_used(block);
 	allocator->stats.free -= zloc__block_size(block);
 	allocator->stats.free_blocks--;
-	allocator->stats.blocks_in_use++;
 	#ifdef ZLOC_EXTRA_DEBUGGING
 	zloc__verify_lists(allocator);
 	#endif
@@ -737,6 +736,7 @@ static inline zloc_header *zloc__maybe_split_block(zloc_allocator *allocator, zl
 	zloc__set_block_size(block, size + zloc__block_extension_size);
 	//Note if this callback calls back into reallocate or allocate functions then you will get a spin lock.
 	zloc__do_split_block_callback;
+	allocator->stats.blocks_in_use++;
 	zloc__push_block(allocator, trimmed);
 	return block;
 }
@@ -752,6 +752,7 @@ static inline zloc_header *zloc__split_aligned_block(zloc_allocator *allocator, 
 	zloc__set_prev_physical_block(next_block, trimmed);
 	zloc__set_prev_physical_block(trimmed, block);
 	zloc__set_block_size(block, size_minus_overhead);
+	allocator->stats.blocks_in_use++;
 	zloc__push_block(allocator, block);
 #ifdef ZLOC_SAFEGUARDS
 	trimmed->allocator = allocator;
@@ -1140,6 +1141,7 @@ ZLOC_API void* zloc_PromoteLinearBlock(zloc_allocator *allocator, void* linear_a
 	ZLOC_ASSERT(block == trimmed_free_block->prev_physical_block);
 	ZLOC_ASSERT(trimmed_free_block == next_block->prev_physical_block);
 
+	allocator->stats.blocks_in_use++;
 	zloc__push_block(allocator, trimmed_free_block);
 
 	zloc__unlock_thread_access(allocator);
